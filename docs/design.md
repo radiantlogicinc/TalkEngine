@@ -26,7 +26,7 @@ graph LR
     TE -->|4. store| Overrides[(Overrides)]
     TE -->|5. _initialize_nlu_components| DefID(DefaultIntentDetection)
     TE -->| | DefPE(DefaultParamExtraction)
-    TE -->| | DefTG(DefaultTextGeneration)
+    TE -->| | DefTG(DefaultResponseGeneration)
     Overrides -->|6. select override OR default| ID(IntentDetector)
     Overrides -->| | PE(ParamExtractor)
     Overrides -->| | TG(TextGenerator)
@@ -85,7 +85,7 @@ graph LR
 ### 3.3 Default NLU Implementations (`talkengine/nlu_pipeline/default_*.py`)
 - **`DefaultIntentDetection`**: Implements `IntentDetectionInterface`. Takes `command_metadata` in `__init__`. Uses basic keyword/substring matching against command keys to implement `classify_intent`.
 - **`DefaultParameterExtraction`**: Implements `ParameterExtractionInterface`. Takes `command_metadata` in `__init__`. `identify_parameters` currently returns an empty dictionary (placeholder).
-- **`DefaultTextGeneration`**: Implements `TextGenerationInterface`. `generate_text` returns a dictionary containing the intent and parameters as the raw response, and a simple string representation as the text response.
+- **`DefaultResponseGeneration`**: Implements `TextGenerationInterface`. `generate_text` returns a dictionary containing the intent and parameters as the raw response, and a simple string representation as the text response.
 
 ## 4. Data Models
 

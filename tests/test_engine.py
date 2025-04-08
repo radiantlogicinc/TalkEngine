@@ -7,7 +7,7 @@ from talkengine import TalkEngine
 from talkengine.nlu_pipeline.nlu_engine_interfaces import (
     IntentDetectionInterface,
     ParameterExtractionInterface,
-    TextGenerationInterface,
+    ResponseGenerationInterface,
 )
 
 # Sample metadata for testing
@@ -34,8 +34,8 @@ def mock_param_extractor():
 
 @pytest.fixture
 def mock_text_generator():
-    mock = MagicMock(spec=TextGenerationInterface)
-    mock.generate_text.return_value = ({"mock_raw": True}, "mock_text")
+    mock = MagicMock(spec=ResponseGenerationInterface)
+    mock.generate_response.return_value = ({"mock_raw": True}, "mock_text")
     return mock
 
 
@@ -61,7 +61,7 @@ def test_talkengine_init_defaults():
     assert engine._nlu_overrides_config == {}
     assert isinstance(engine._intent_detector, IntentDetectionInterface)
     assert isinstance(engine._param_extractor, ParameterExtractionInterface)
-    assert isinstance(engine._text_generator, TextGenerationInterface)
+    assert isinstance(engine._text_generator, ResponseGenerationInterface)
     # Check that defaults were instantiated (or add specific checks if needed)
     assert not engine._is_trained
 
@@ -130,7 +130,7 @@ def test_talkengine_run_with_overrides(mock_overrides):
     engine._param_extractor.identify_parameters.assert_called_once_with(
         query, "mock_intent"
     )
-    engine._text_generator.generate_text.assert_called_once_with(
+    engine._text_generator.generate_response.assert_called_once_with(
         "mock_intent", {"mock_param": "mock_value"}
     )
 

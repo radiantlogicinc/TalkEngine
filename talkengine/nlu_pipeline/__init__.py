@@ -8,13 +8,13 @@ in the talkengine system, including interfaces and default implementations.
 from .nlu_engine_interfaces import (
     IntentDetectionInterface,
     ParameterExtractionInterface,
-    TextGenerationInterface,
+    ResponseGenerationInterface,
 )
 
 # Default Implementations
 from .default_intent_detection import DefaultIntentDetection
 from .default_param_extraction import DefaultParameterExtraction
-from .default_text_generation import DefaultTextGeneration
+from .default_response_generation import DefaultResponseGeneration
 
 # Models (If any remain relevant - currently empty/deleted)
 # from .models import ...
@@ -23,10 +23,10 @@ __all__ = [
     # Interfaces
     "IntentDetectionInterface",
     "ParameterExtractionInterface",
-    "TextGenerationInterface",
+    "ResponseGenerationInterface",
     # Default Implementations
     "DefaultIntentDetection",
     "DefaultParameterExtraction",
-    "DefaultTextGeneration",
+    "DefaultResponseGeneration",
     # Models (if added back)
 ]

@@ -2,12 +2,6 @@
 Defines the core TalkEngine class.
 """
 
-# Allow Pydantic models if available, but don't require it
-try:
-    from pydantic import BaseModel
-except ImportError:
-    BaseModel = object  # type: ignore # Define BaseModel as object if Pydantic is not installed
-
 from typing import Any, Optional, Dict, List, Tuple, Union
 
 # Assuming simplified types are defined or basic types used
@@ -15,17 +9,17 @@ from typing import Any, Optional, Dict, List, Tuple, Union
 from .nlu_pipeline.nlu_engine_interfaces import (
     IntentDetectionInterface,
     ParameterExtractionInterface,
-    TextGenerationInterface,
+    ResponseGenerationInterface,
 )
 from .nlu_pipeline.default_intent_detection import DefaultIntentDetection
 from .nlu_pipeline.default_param_extraction import DefaultParameterExtraction
-from .nlu_pipeline.default_text_generation import DefaultTextGeneration
+from .nlu_pipeline.default_response_generation import DefaultResponseGeneration
 from .utils.logging import logger
 
 
 # Type hint for NLU override values (instances implementing interfaces)
 NLUImplementation = Union[
-    IntentDetectionInterface, ParameterExtractionInterface, TextGenerationInterface
+    IntentDetectionInterface, ParameterExtractionInterface, ResponseGenerationInterface
 ]
 
 
@@ -41,7 +35,7 @@ class TalkEngine:
     _nlu_overrides_config: Dict[str, NLUImplementation]  # Store the input config
     _intent_detector: IntentDetectionInterface
     _param_extractor: ParameterExtractionInterface
-    _text_generator: TextGenerationInterface
+    _text_generator: ResponseGenerationInterface
     _is_trained: bool
 
     def __init__(
@@ -129,17 +123,17 @@ class TalkEngine:
 
         # Text Generation
         text_gen_override = self._nlu_overrides_config.get("text_generation")
-        if isinstance(text_gen_override, TextGenerationInterface):
+        if isinstance(text_gen_override, ResponseGenerationInterface):
             self._text_generator = text_gen_override
             logger.debug("Using provided TextGeneration override.")
         elif text_gen_override is not None:
             logger.warning(
                 "Invalid TextGeneration override provided (type mismatch). Using default."
             )
-            self._text_generator = DefaultTextGeneration()
+            self._text_generator = DefaultResponseGeneration()
         else:
-            logger.debug("Using DefaultTextGeneration.")
-            self._text_generator = DefaultTextGeneration()
+            logger.debug("Using DefaultResponseGeneration.")
+            self._text_generator = DefaultResponseGeneration()
 
         logger.debug("NLU components initialized.")
 
@@ -189,7 +183,7 @@ class TalkEngine:
         logger.debug(f"Parameters Extracted: {parameters}")
 
         # 3. Text Generation
-        raw_response, response_text = self._text_generator.generate_text(
+        raw_response, response_text = self._text_generator.generate_response(
             identified_intent, parameters
         )
         logger.debug(f"Generated Raw Response: {raw_response}")

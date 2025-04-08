@@ -232,7 +232,7 @@ This report outlines the significant refactoring required. The core NLU logic wi
     *   Review/Simplify `IntentDetectionInterface` and `ParameterExtractionInterface` (remove unused methods like `categorize_user_message`, `clarify_intent`, `get_supplementary_prompt_instructions`, `validate_parameters` unless needed for deferred default impl). Ensure `classify_intent` and `identify_parameters` remain.
     *   *Consider* adding a new simple `TextGenerationInterface` with `generate_text(intent, parameters)` method to produce `raw_response` and `response_text`.
 2.  **Adapt Default Implementations (`default_*.py`):**
-    *   Modify/Create `DefaultIntentDetection`, `DefaultParameterExtraction`, and potentially `DefaultTextGeneration` to inherit from the adapted interfaces.
+    *   Modify/Create `DefaultIntentDetection`, `DefaultParameterExtraction`, and potentially `DefaultResponseGeneration` to inherit from the adapted interfaces.
     *   Implement their methods to return dummy data or raise `NotImplementedError` initially.
 3.  **Integrate in `TalkEngine`:**
     *   Modify `TalkEngine.__init__` to instantiate default NLU components or use overrides if provided.

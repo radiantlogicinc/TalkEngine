@@ -58,14 +58,16 @@ class ParameterExtractionInterface(ABC):
 
 
 # pylint: disable=too-few-public-methods
-class TextGenerationInterface(ABC):
+class ResponseGenerationInterface(ABC):
     """Interface for generating response text and raw response data.
 
     Implementations might use simple formatting or more complex generation logic.
     """
 
     @abstractmethod
-    def generate_text(self, intent: str, parameters: Dict[str, Any]) -> Tuple[Any, str]:
+    def generate_response(
+        self, intent: str, parameters: Dict[str, Any]
+    ) -> Tuple[Any, str]:
         """Generate raw response data and a user-facing text response.
 
         Args:
