@@ -6,6 +6,10 @@ Defines abstract interfaces for core NLU components.
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional, Tuple
 
+# Import necessary types
+from .models import NLUPipelineContext
+from .interaction_models import ValidationRequestInfo
+
 
 # pylint: disable=too-few-public-methods
 class IntentDetectionInterface(ABC):
@@ -17,12 +21,16 @@ class IntentDetectionInterface(ABC):
 
     @abstractmethod
     def classify_intent(
-        self, user_input: str, excluded_intents: Optional[List[str]] = None
+        self,
+        user_input: str,
+        context: NLUPipelineContext,
+        excluded_intents: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         """Classify user intent based on input.
 
         Args:
             user_input: The natural language query from the user.
+            context: The current NLU pipeline context.
             excluded_intents: Optional list of intents to exclude from consideration.
 
         Returns:
@@ -42,18 +50,28 @@ class ParameterExtractionInterface(ABC):
     """
 
     @abstractmethod
-    def identify_parameters(self, user_input: str, intent: str) -> Dict[str, Any]:
+    def identify_parameters(
+        self,
+        user_input: str,
+        intent: str,
+        context: NLUPipelineContext,
+    ) -> Tuple[Dict[str, Any], List[ValidationRequestInfo]]:
         """Extract parameters from user input for the given classified intent.
 
         Args:
             user_input: The natural language query from the user.
             intent: The classified intent (command key).
+            context: The current NLU pipeline context.
 
         Returns:
-            A dictionary of extracted parameter names and their values.
-            Example: {"param1": "value1", "param2": 123}
+            A tuple containing:
+            1. Dictionary of extracted parameter names and their values.
+               Example: {"param1": "value1", "param2": 123}
+            2. List of ValidationRequestInfo objects detailing parameters
+               that require user validation (e.g., missing required fields).
+               Example: [ValidationRequestInfo(parameter_name='loc', reason='missing_required')]
         """
-        # Default implementation should return an empty dict
+        # Default implementation should return ({}, [])
         raise NotImplementedError
 
 
@@ -66,13 +84,17 @@ class ResponseGenerationInterface(ABC):
 
     @abstractmethod
     def generate_response(
-        self, intent: str, parameters: Dict[str, Any]
+        self,
+        intent: str,
+        parameters: Dict[str, Any],
+        context: NLUPipelineContext,
     ) -> Tuple[Any, str]:
         """Generate raw response data and a user-facing text response.
 
         Args:
             intent: The classified intent (command key).
             parameters: The extracted parameters.
+            context: The current NLU pipeline context.
 
         Returns:
             A tuple containing:

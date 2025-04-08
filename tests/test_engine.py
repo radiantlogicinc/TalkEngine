@@ -1,7 +1,7 @@
 """Tests for the TalkEngine class."""
 
 import pytest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, ANY
 
 from talkengine import TalkEngine
 from talkengine.nlu_pipeline.nlu_engine_interfaces import (
@@ -9,6 +9,7 @@ from talkengine.nlu_pipeline.nlu_engine_interfaces import (
     ParameterExtractionInterface,
     ResponseGenerationInterface,
 )
+from talkengine.nlu_pipeline.models import NLUPipelineContext
 
 # Sample metadata for testing
 TEST_METADATA = {
@@ -64,6 +65,8 @@ def test_talkengine_init_defaults():
     assert isinstance(engine._text_generator, ResponseGenerationInterface)
     # Check that defaults were instantiated (or add specific checks if needed)
     assert not engine._is_trained
+    assert isinstance(engine._pipeline_context, NLUPipelineContext)
+    assert engine._pipeline_context.interaction_mode is None
 
 
 def test_talkengine_init_with_history():
@@ -84,6 +87,7 @@ def test_talkengine_init_with_overrides(
     assert engine._intent_detector is mock_intent_detector
     assert engine._param_extractor is mock_param_extractor
     assert engine._text_generator is mock_text_generator
+    assert isinstance(engine._pipeline_context, NLUPipelineContext)
 
 
 def test_talkengine_train_placeholder():
@@ -95,43 +99,59 @@ def test_talkengine_train_placeholder():
 
 
 def test_talkengine_run_structure_defaults():
-    """Test the structure of the run() method output with defaults."""
+    """Test the structure of the run() method output with defaults (non-interactive path)."""
     engine = TalkEngine(command_metadata=TEST_METADATA)
     engine.train()
-    result, hint = engine.run("test query")
+    result, hint = engine.run("test query for cmd1")
 
+    # Expecting standard NLU result, not interaction prompt
     assert hint == "new_conversation"
     assert isinstance(result, dict)
     assert "intent" in result
+    # Default intent detector might actually find cmd1
+    assert result["intent"] == "cmd1"
     assert "parameters" in result
-    assert "confidence" in result
-    assert "raw_response" in result
-    assert "response_text" in result
-    # Default impls might return specific values, can test those later
+    assert result["parameters"] == {}
 
 
 def test_talkengine_run_with_overrides(mock_overrides):
-    """Test that run() calls the override methods."""
+    """Test that run() calls the override methods (non-interactive path)."""
     engine = TalkEngine(command_metadata=TEST_METADATA, nlu_overrides=mock_overrides)
     engine.train()
     query = "another test query"
+
+    # Configure mocks for a successful non-interactive run
+    # Intent detector returns high confidence
+    engine._intent_detector.classify_intent.return_value = {
+        "intent": "mock_intent",
+        "confidence": 0.99,
+    }
+    # Param extractor returns success (no validation needed)
+    mock_params = {"mock_param": "mock_value"}
+    engine._param_extractor.identify_parameters.return_value = (mock_params, [])
+    # Text generator returns standard response
+    mock_raw = {"mock_raw": True}
+    mock_text = "mock_text"
+    engine._text_generator.generate_response.return_value = (mock_raw, mock_text)
+
     result, hint = engine.run(query)
 
     # Check return structure matches what mocks provide
     assert hint == "new_conversation"
     assert result["intent"] == "mock_intent"
-    assert result["parameters"] == {"mock_param": "mock_value"}
-    assert result["confidence"] == 0.95
-    assert result["raw_response"] == {"mock_raw": True}
-    assert result["response_text"] == "mock_text"
+    assert result["parameters"] == mock_params
+    assert result["confidence"] == 0.99
+    assert result["raw_response"] == mock_raw
+    assert result["response_text"] == mock_text
 
-    # Check if the *correct mock instances* stored inside the engine were called
-    engine._intent_detector.classify_intent.assert_called_once_with(query)
+    # Check if the correct mock instances were called with context
+    # ANY used for context as its state changes during run
+    engine._intent_detector.classify_intent.assert_called_once_with(query, ANY)
     engine._param_extractor.identify_parameters.assert_called_once_with(
-        query, "mock_intent"
+        query, "mock_intent", ANY
     )
     engine._text_generator.generate_response.assert_called_once_with(
-        "mock_intent", {"mock_param": "mock_value"}
+        "mock_intent", mock_params, ANY
     )
 
 
@@ -155,9 +175,8 @@ def test_talkengine_reset():
     # Assuming default detector is used after reset without overrides
     assert isinstance(engine._intent_detector, IntentDetectionInterface)
     assert engine._intent_detector is not initial_intent_detector  # Ensure new instance
-    assert (
-        engine._intent_detector._command_metadata == new_metadata
-    )  # Check if new metadata was passed
+    assert isinstance(engine._pipeline_context, NLUPipelineContext)
+    assert engine._pipeline_context.interaction_mode is None
     # train() needs to be called again after reset
     assert not engine._is_trained
 

@@ -6,7 +6,7 @@
 This document specifies the requirements for the streamlined `talkengine` library, focusing on providing a simple NLU pipeline via the `TalkEngine` class.
 
 ### 1.2 Product Scope
-`talkengine` allows developers to initialize an NLU pipeline (`TalkEngine`) with command descriptions (metadata), optional conversation history, and optional NLU component overrides. The engine processes single natural language queries to identify user intent and extract parameters based on the provided configuration.
+`talkengine` allows developers to initialize an NLU pipeline (`TalkEngine`) with command descriptions (metadata), optional conversation history, and optional NLU component overrides. The engine processes natural language queries, potentially engaging in interactive sub-dialogues (e.g., for clarification or validation) to identify user intent and extract parameters based on the provided configuration.
 
 ### 1.3 Intended Audience
 This document is intended for developers using the `talkengine` library.
@@ -21,6 +21,10 @@ This document is intended for developers using the `talkengine` library.
 - **Single Query Processing**: The `run()` method processes one user query at a time.
 - **Intent Classification**: Maps user input to a predefined command key based on the provided metadata and configured intent detector.
 - **Parameter Extraction**: Identifies potential parameters based on the user input, classified intent, and configured parameter extractor.
+- **Interactive Sub-dialogues**: Can enter specific modes to:
+    - Clarify ambiguous user intent.
+    - Validate or request missing parameters.
+    - Solicit feedback on previous responses.
 - **Text Generation**: Generates a basic textual summary and a raw data representation of the NLU results.
 - **Hint Generation**: Provides a hint indicating if the query is treated as a new conversation turn (currently always `'new_conversation'`).
 - **Stateful Reset**: The `reset()` method allows re-initializing the `TalkEngine` instance with new configuration.
@@ -52,11 +56,19 @@ FR-2.4: Intent classification shall map the query to a command key defined in th
 FR-2.5: Parameter extraction shall return a dictionary of identified parameter names and values.
 FR-2.6: Text generation shall produce a structured raw response and a user-readable text summary.
 
+### 3.3 Interaction Handling
+FR-3.1: The system shall support entering distinct interaction modes when needed (e.g., intent clarification, parameter validation, feedback collection).
+FR-3.2: The system shall provide mechanisms (handlers) to manage the dialogue flow within each interaction mode, including generating prompts and processing user responses specific to that mode.
+FR-3.3: The system shall define specific data structures to carry the necessary context and information for each interaction mode (e.g., clarification options, parameter to validate).
+FR-3.4: Upon successful completion of an interaction mode, the system shall update its internal state (e.g., clarified intent, validated parameter) and potentially resume the main NLU pipeline processing.
+FR-3.5: The system shall allow exiting an interaction mode based on user input or internal logic.
+
 ## 4. Non-Functional Requirements
 
 ### 4.1 Usability
 NFR-1.1: The `TalkEngine` API shall be simple and intuitive to use.
 NFR-1.2: Configuration via dictionaries and optional overrides should be straightforward.
+NFR-1.3: Prompts generated during interaction modes shall be clear and guide the user effectively.
 
 ### 4.2 Reliability
 NFR-2.1: The system should handle basic errors during initialization (e.g., missing metadata) gracefully (Future enhancement: Add more robust validation).

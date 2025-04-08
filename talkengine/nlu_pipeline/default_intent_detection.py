@@ -6,6 +6,7 @@ Provides a basic keyword/substring matching implementation.
 from typing import Any, Dict, List, Optional
 
 from talkengine.nlu_pipeline.nlu_engine_interfaces import IntentDetectionInterface
+from talkengine.nlu_pipeline.models import NLUPipelineContext
 from talkengine.utils.logging import logger
 
 
@@ -103,11 +104,14 @@ class DefaultIntentDetection(IntentDetectionInterface):
         return None, 0
 
     def classify_intent(
-        self, user_input: str, excluded_intents: Optional[List[str]] = None
+        self,
+        user_input: str,
+        context: NLUPipelineContext,
+        excluded_intents: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         """Default implementation using keyword/substring matching."""
         logger.debug("Classifying intent for: %s", user_input)
-        excluded = excluded_intents or []
+        excluded = excluded_intents or context.excluded_intents or []
 
         # Use command keys stored during initialization
         available_commands = [cmd for cmd in self._command_keys if cmd not in excluded]
@@ -121,6 +125,9 @@ class DefaultIntentDetection(IntentDetectionInterface):
                 intent = matched_command
                 # Confidence based on match type (simple heuristic)
                 confidence = 0.9 if match_type == 2 else 0.7
+                # TODO: Potentially return multiple matches if ambiguous, for clarification
+                # Example: If multiple commands have match_type 1, return them in 'options'?
+                # For now, just return the first/best based on simple logic.
             else:
                 intent = "unknown"
                 confidence = 0.1

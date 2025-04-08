@@ -81,6 +81,13 @@ while True:
     nlu_result, hint = engine.run(user_query)
 
     print(f"  Hint: {hint}") # Currently always "new_conversation"
+
+    # Note: If the engine needs clarification or parameter validation,
+    # the nlu_result dictionary will contain an 'interaction_prompt'
+    # key instead of 'intent', 'parameters', etc.
+    # The 'hint' will indicate the interaction state (e.g., 'awaiting_clarification').
+    # Your application logic should handle these interaction prompts.
+
     print(f"  Intent: {nlu_result.get('intent', 'N/A')}")
     print(f"  Confidence: {nlu_result.get('confidence', 0.0):.2f}")
     print(f"  Parameters: {nlu_result.get('parameters', {})}")
@@ -110,6 +117,10 @@ NLU Result Dictionary Keys:
 - `confidence` (float): Confidence score for the intent classification.
 - `raw_response` (Any): Internal data structure from text generation.
 - `response_text` (str): Basic textual summary of the NLU result.
+
+Interaction Prompt Dictionary Keys (when hint indicates interaction):
+- `interaction_prompt` (str): The prompt message to show the user.
+- `interaction_mode` (InteractionState): The specific mode the engine is in.
 
 ## 🛠️ Development
 

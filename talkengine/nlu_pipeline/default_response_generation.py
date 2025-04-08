@@ -6,6 +6,7 @@ Provides a basic implementation for generating responses.
 from typing import Any, Dict, Tuple
 
 from talkengine.nlu_pipeline.nlu_engine_interfaces import ResponseGenerationInterface
+from talkengine.nlu_pipeline.models import NLUPipelineContext
 from talkengine.utils.logging import logger
 
 
@@ -19,7 +20,10 @@ class DefaultResponseGeneration(ResponseGenerationInterface):
         # No specific initialization needed for this basic version
 
     def generate_response(
-        self, intent: str, parameters: Dict[str, Any]
+        self,
+        intent: str,
+        parameters: Dict[str, Any],
+        context: NLUPipelineContext,
     ) -> Tuple[Any, str]:
         """Default implementation: generates a basic dictionary and string representation."""
         logger.debug(
