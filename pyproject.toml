@@ -1,0 +1,62 @@
+[project]
+name = "talkengine"
+version = "0.1.0"
+description = "Enable conversational capability for python applications"
+readme = "README.md"
+requires-python = ">=3.11,<3.13"
+license = {text = "Apache 2.0"}
+authors = [
+    {name = "Dhar Rawal", email = "drawal@radiantlogic.com"}
+]
+
+dependencies = [
+    # Core dependencies
+    "pydantic>=2.9.2",
+    "dspy-ai>=2.5.20",
+    "speedict>=0.3.12",
+    "python-dotenv>=1.0.1",
+    "murmurhash>=1.0.10",
+    "scikit-learn>=1.6.1",
+    "transformers>=4.48.2"    
+]
+
+[project.optional-dependencies]
+dev = [
+    "black>=24.10.0",
+    "ruff>=0.0.265",
+    "mypy>=1.13.0",
+    "bandit>=1.7.10",
+    "pytest>=8.3.3",
+    "pytest-mock>=3.14.0"
+]
+
+[tool.uv.dependency-groups.docs]
+dependencies = [
+    "sphinx>=7.0.0",
+    "sphinx-rtd-theme>=1.2.0",
+]
+optional = true
+
+[build-system]
+requires = ["setuptools>=61.0.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["talkengine"]
+
+[tool.pylint]
+max-line-length = 135
+
+[tool.ruff]
+line-length = 135
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "PLC"]
+# Ignore redefined-outer-name in test files (equivalent to pylint W0621)
+per-file-ignores = { "tests/*" = ["RUF006"] }
+
+[tool.bandit]
+# Skip assertion checks (B101) for test files
+skips = ["B101"]
+exclude_dirs = [".git", "__pycache__", ".venv", ".pytest_cache"]
