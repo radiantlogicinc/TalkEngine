@@ -2,34 +2,45 @@
 Defines the core TalkEngine class.
 """
 
-from typing import Any, Optional, Dict, List, Tuple, Union
+from typing import Any, Optional, Dict, List, Tuple, Union, Callable, Mapping
 
 # Assuming simplified types are defined or basic types used
 # from .types import CommandMetadataInput, ConversationHistoryInput, NLUOverridesInput, NLURunResult
 from .nlu_pipeline.nlu_engine_interfaces import (
     IntentDetectionInterface,
     ParameterExtractionInterface,
-    ResponseGenerationInterface,
+    TextGenerationInterface,
 )
 
-# Import NLU models and interaction components
-from .nlu_pipeline.models import NLUPipelineContext, InteractionState
+# Import NLU models and interaction components - Corrected path
+from .models import (
+    NLUPipelineContext,
+    InteractionState,
+    NLUResult,
+    ConversationDetail,
+    InteractionLogEntry,
+)
 from .nlu_pipeline.interaction_handlers import (
     InteractionHandler,
     ClarificationHandler,
     ValidationHandler,
-    FeedbackHandler,
     InteractionResult,
 )
 from .nlu_pipeline.default_intent_detection import DefaultIntentDetection
 from .nlu_pipeline.default_param_extraction import DefaultParameterExtraction
-from .nlu_pipeline.default_response_generation import DefaultResponseGeneration
+
+# Corrected interaction model path
+from .nlu_pipeline.interaction_models import (
+    ValidationRequestInfo,
+    ValidationData,
+    ClarificationData,
+)
 from .utils.logging import logger
 
 
 # Type hint for NLU override values (instances implementing interfaces)
 NLUImplementation = Union[
-    IntentDetectionInterface, ParameterExtractionInterface, ResponseGenerationInterface
+    IntentDetectionInterface, ParameterExtractionInterface, TextGenerationInterface
 ]
 
 
@@ -42,20 +53,20 @@ class TalkEngine:
 
     _command_metadata: Dict[str, Any]
     _conversation_history: List[Dict[str, Any]]
-    _nlu_overrides_config: Dict[str, NLUImplementation]  # Store the input config
+    _nlu_overrides_config: Mapping[str, NLUImplementation]  # Store the input config
     _intent_detector: IntentDetectionInterface
     _param_extractor: ParameterExtractionInterface
-    _text_generator: ResponseGenerationInterface
+    _text_generator: Optional[TextGenerationInterface]
     _is_trained: bool
     # Add pipeline context and interaction handlers
     _pipeline_context: NLUPipelineContext
-    _interaction_handlers: Dict[InteractionState, InteractionHandler]
+    _interaction_handlers: Mapping[InteractionState, InteractionHandler]
 
     def __init__(
         self,
         command_metadata: Dict[str, Any],
         conversation_history: Optional[List[Dict[str, Any]]] = None,
-        nlu_overrides: Optional[Dict[str, NLUImplementation]] = None,
+        nlu_overrides: Optional[Mapping[str, NLUImplementation]] = None,
     ):
         """Initializes the TalkEngine with configuration.
 
@@ -81,7 +92,7 @@ class TalkEngine:
         self,
         command_metadata: Dict[str, Any],
         conversation_history: Optional[List[Dict[str, Any]]] = None,
-        nlu_overrides: Optional[Dict[str, NLUImplementation]] = None,
+        nlu_overrides: Optional[Mapping[str, NLUImplementation]] = None,
     ):
         """Initializes or re-initializes the engine components."""
         # Basic validation
@@ -97,11 +108,11 @@ class TalkEngine:
         self._nlu_overrides_config = nlu_overrides or {}
 
         # Initialize pipeline context
-        self._pipeline_context = NLUPipelineContext(
-            command_metadata=self._command_metadata,
-            conversation_history=self._conversation_history,
-            # Other fields will be updated during the pipeline run
-        )
+        self._pipeline_context = NLUPipelineContext()
+        # Store static config in context if needed by components
+        # (Alternatively, pass directly during component calls)
+        # self._pipeline_context.command_metadata = self._command_metadata
+        # self._pipeline_context.conversation_history = self._conversation_history
 
         # Initialize NLU components (intent detection, parameter extraction, text generation)
         # using defaults or overrides
@@ -149,17 +160,22 @@ class TalkEngine:
 
         # Text Generation
         text_gen_override = self._nlu_overrides_config.get("text_generation")
-        if isinstance(text_gen_override, ResponseGenerationInterface):
-            self._text_generator = text_gen_override
-            logger.debug("Using provided TextGeneration override.")
-        elif text_gen_override is not None:
-            logger.warning(
-                "Invalid TextGeneration override provided (type mismatch). Using default."
-            )
-            self._text_generator = DefaultResponseGeneration()
+        if "text_generation" in self._nlu_overrides_config:
+            # Key provided, check if instance is valid
+            if isinstance(text_gen_override, TextGenerationInterface):
+                self._text_generator = text_gen_override
+                logger.debug("Using provided TextGeneration override.")
+            else:  # Key provided but invalid type
+                logger.warning(
+                    "Invalid TextGeneration override provided (type mismatch). Setting to None."
+                )
+                self._text_generator = None  # Treat invalid override as no generator
         else:
-            logger.debug("Using DefaultResponseGeneration.")
-            self._text_generator = DefaultResponseGeneration()
+            # Key NOT provided, explicitly set to None (no default fallback)
+            logger.debug(
+                "No TextGeneration override provided. Text generator disabled."
+            )
+            self._text_generator = None
 
         logger.debug("NLU components initialized.")
 
@@ -169,7 +185,7 @@ class TalkEngine:
         self._interaction_handlers = {
             InteractionState.CLARIFYING_INTENT: ClarificationHandler(),
             InteractionState.VALIDATING_PARAMETER: ValidationHandler(),
-            InteractionState.AWAITING_FEEDBACK: FeedbackHandler(),
+            # InteractionState.AWAITING_FEEDBACK: FeedbackHandler(), # Removed - State not defined
         }
         logger.debug("Interaction Handlers Initialized.")
 
@@ -189,430 +205,413 @@ class TalkEngine:
         self._is_trained = True
         pass
 
-    def run(self, query: str) -> Tuple[Dict[str, Any], str]:
-        """Processes a single natural language query, potentially involving interaction.
+    def run(
+        self, user_query: str, excluded_intents: Optional[List[str]] = None
+    ) -> NLUResult:
+        """Processes a single natural language query.
 
-        This method implements the core Finite State Machine (FSM) logic.
-        If the engine is in an interaction mode (e.g., clarifying intent, validating
-        parameters), it delegates the user's query to the appropriate interaction
-        handler. The handler processes the input and returns an InteractionResult,
-        which determines the next state (staying in the mode, exiting, updating context).
-
-        If not in an interaction mode, it executes the standard NLU pipeline via
-        `_run_nlu_pipeline()`. This internal method handles intent classification,
-        parameter extraction, and response generation, and includes decision points
-        to potentially *enter* an interaction mode based on NLU results (e.g., low
-        confidence intent, missing required parameters).
+        Handles interaction modes (clarification, validation) and the main NLU pipeline
+        (intent, params, optional code execution, optional text generation).
+        Logs interactions and returns a structured NLUResult.
 
         Args:
-            query: The user's natural language input.
+            user_query: The user's natural language input.
+            excluded_intents: Optional list of intents to exclude from classification.
 
         Returns:
-            A tuple containing:
-            1. Result (dict): Contains the final NLU result OR the interaction prompt data.
-               - For final NLU result: Includes keys like 'intent', 'parameters', 'confidence',
-                 'raw_response', 'response_text'.
-               - For interaction prompt: Includes keys like 'interaction_prompt' (str),
-                 'interaction_mode' (InteractionState).
-               - For errors: Includes an 'error' key with a description.
-            2. Hint (str): Describes the outcome or current state (e.g., 'new_conversation',
-               'awaiting_clarification', 'awaiting_validation', 'interaction_clarifying_intent_ended').
+            An NLUResult object containing the outcome of the processing attempt.
         """
-        logger.info(f"TalkEngine run() called with query: '{query}'")
-        logger.debug(f"Initial context: {self._pipeline_context}")
+        logger.info(f"TalkEngine run() called with query: '{user_query}'")
+        logger.debug(f"Initial context for run: {self._pipeline_context}")
 
-        # --- FSM Logic ---
+        proceed_immediately_from_interaction = False
+        goto_step = "intent_classification"
 
-        # Check if we are currently in an interaction mode
-        if self._pipeline_context.interaction_mode:
+        # --- FSM Logic (Handle if already in interaction) ---
+        if self._pipeline_context.interaction_mode != InteractionState.IDLE:
             handler = self._interaction_handlers.get(
                 self._pipeline_context.interaction_mode
             )
             if not handler:
                 logger.error(
-                    f"No handler found for interaction mode: {self._pipeline_context.interaction_mode}"
-                    + ". Exiting interaction."
+                    f"No handler for mode {self._pipeline_context.interaction_mode}. Resetting."
                 )
-                # Clear interaction state to prevent getting stuck
-                self._pipeline_context.interaction_mode = None
+                self._pipeline_context.interaction_mode = InteractionState.IDLE
                 self._pipeline_context.interaction_data = None
-                return {"error": "Internal handler error"}, "error"
-
-            logger.debug(
-                f"In interaction mode: {self._pipeline_context.interaction_mode}. Handling input..."
-            )
-            interaction_result: InteractionResult = handler.handle_input(
-                query, self._pipeline_context
-            )
-            logger.debug(f"Interaction Result: {interaction_result}")
-
-            # Process InteractionResult
-            response_payload: Dict[str, Any]
-            hint: str
-
-            # Update context FIRST
-            if interaction_result.update_context:
-                logger.debug(f"Updating context: {interaction_result.update_context}")
-                # Need to handle potential Pydantic model update correctly
-                # This is a basic update; might need model_copy/update for Pydantic V2
-                for key, value in interaction_result.update_context.items():
-                    setattr(self._pipeline_context, key, value)
-                # self._pipeline_context = self._pipeline_context.model_copy(update=interaction_result.update_context)
-
-            if interaction_result.exit_mode:
-                logger.info(
-                    f"Exiting interaction mode: {self._pipeline_context.interaction_mode}"
-                )
-                current_mode = (
-                    self._pipeline_context.interaction_mode
-                )  # Store before clearing
-                # Clear interaction state
-                self._pipeline_context.interaction_mode = None
-                self._pipeline_context.interaction_data = None
-
-                if interaction_result.proceed_immediately:
-                    logger.info("Proceeding immediately after interaction.")
-                    # --- Updated Logic: Call subsequent pipeline steps ---
-                    interaction_payload: Optional[Tuple[Dict[str, Any], str]] = None
-                    final_result: Dict[str, Any]
-                    final_hint: str
-
-                    if current_mode == InteractionState.CLARIFYING_INTENT:
-                        logger.debug(
-                            "Proceeding after clarification: Running param extraction/validation."
-                        )
-                        # Run param extraction + validation check
-                        interaction_payload = (
-                            self._extract_parameters_and_handle_validation(query)
-                        )
-                        if interaction_payload:
-                            # Entered validation mode
-                            return interaction_payload[0], interaction_payload[1]
-                        else:
-                            # Param extraction OK, proceed to response generation
-                            logger.debug(
-                                "Proceeding after clarification/param extraction: Running response generation."
-                            )
-                            final_result, final_hint = self._generate_final_response()
-                            return final_result, final_hint
-
-                    elif current_mode == InteractionState.VALIDATING_PARAMETER:
-                        logger.debug(
-                            "Proceeding after validation: Running response generation."
-                        )
-                        # Validation successful, context updated, just generate response
-                        final_result, final_hint = self._generate_final_response()
-                        return final_result, final_hint
-
-                    # Add handling for other modes if they can proceed_immediately
-                    else:
-                        logger.warning(
-                            f"Unhandled proceed_immediately case for mode: {current_mode}"
-                        )
-                        # Fallback: Re-run full pipeline (original problematic behavior)
-                        # Consider returning an error or specific state instead.
-                        nlu_result, hint = self._run_nlu_pipeline(query)  # Fallback
-                        return nlu_result, hint
-                    # --- End Updated Logic ---
-
-                else:
-                    # Interaction ended, just return the handler's last response
-                    response_payload = {"response_text": interaction_result.response}
-                    hint = f"interaction_{current_mode.name.lower()}_ended"
-                    logger.debug(
-                        f"Interaction ended. Response: {response_payload}, Hint: {hint}"
-                    )
-                    return response_payload, hint
             else:
-                # Still in interaction mode, return the handler's response (re-prompt)
-                response_payload = {
-                    "interaction_prompt": interaction_result.response,
-                    "interaction_mode": self._pipeline_context.interaction_mode,
-                }
-                hint = (
-                    f"awaiting_{self._pipeline_context.interaction_mode.name.lower()}"
+                logger.debug(
+                    f"In interaction mode: {self._pipeline_context.interaction_mode}. Handling input."
+                )
+                # Log interaction before calling handler
+                if self._pipeline_context.last_prompt_shown:
+                    log_entry: InteractionLogEntry = (
+                        self._pipeline_context.interaction_mode.value,
+                        self._pipeline_context.last_prompt_shown,
+                        user_query,
+                    )
+                    self._pipeline_context.recorded_interactions.append(log_entry)
+                else:
+                    logger.warning("Cannot log interaction: last_prompt_shown is None.")
+
+                interaction_result: InteractionResult = handler.handle_input(
+                    user_query, self._pipeline_context
+                )
+                logger.debug(f"Interaction Result: {interaction_result}")
+
+                # Update context fields based on handler result
+                if interaction_result.update_context:
+                    for key, value in interaction_result.update_context.items():
+                        if hasattr(self._pipeline_context, key):
+                            setattr(self._pipeline_context, key, value)
+                        else:
+                            logger.warning(
+                                f"Attempted to update non-existent context field: {key}"
+                            )
+
+                self._pipeline_context.last_prompt_shown = interaction_result.response
+
+                if interaction_result.exit_mode:
+                    exited_mode = self._pipeline_context.interaction_mode
+                    logger.debug(f"Exiting interaction mode: {exited_mode}")
+                    self._pipeline_context.interaction_mode = InteractionState.IDLE
+                    self._pipeline_context.interaction_data = None
+
+                    if not interaction_result.proceed_immediately:
+                        logger.debug("Interaction ended, returning immediately.")
+                        conv_detail = ConversationDetail(
+                            interactions=self._pipeline_context.recorded_interactions,
+                            response_text=interaction_result.response,
+                        )
+                        return NLUResult(
+                            command=self._pipeline_context.current_intent,
+                            parameters=self._pipeline_context.current_parameters,
+                            confidence=self._pipeline_context.current_confidence,
+                            code_execution_result=None,
+                            conversation_detail=conv_detail,
+                        )
+                    else:
+                        proceed_immediately_from_interaction = True
+                        logger.debug("Interaction ended, proceeding immediately.")
+                        if exited_mode == InteractionState.CLARIFYING_INTENT:
+                            goto_step = "param_extraction"
+                        elif exited_mode == InteractionState.VALIDATING_PARAMETER:
+                            goto_step = "code_execution"
+                        else:
+                            goto_step = "intent_classification"
+                else:
+                    logger.debug("Continuing interaction mode, returning prompt.")
+                    conv_detail = ConversationDetail(
+                        interactions=self._pipeline_context.recorded_interactions,
+                        response_text=interaction_result.response,
+                    )
+                    return NLUResult(
+                        command=self._pipeline_context.current_intent,
+                        parameters=self._pipeline_context.current_parameters,
+                        confidence=self._pipeline_context.current_confidence,
+                        code_execution_result=None,
+                        conversation_detail=conv_detail,
+                    )
+
+        # --- Reset Context ONLY IF starting fresh ---
+        if not proceed_immediately_from_interaction:
+            logger.debug("Starting fresh run. Resetting dynamic context.")
+            self._pipeline_context.recorded_interactions = []
+            self._pipeline_context.last_prompt_shown = None
+            self._pipeline_context.current_intent = None
+            self._pipeline_context.current_parameters = {}
+            self._pipeline_context.current_confidence = None
+            # interaction_mode/data are already IDLE/None if we reach here
+
+        # --- Main NLU Pipeline ---
+        logger.debug(f"Running main NLU pipeline starting from step: {goto_step}")
+
+        if goto_step == "intent_classification":
+            logger.debug("Running main NLU pipeline: Step 1 - Intent Classification")
+            # 1. Intent Classification
+            try:
+                intent_result = self._intent_detector.classify_intent(
+                    user_query, self._pipeline_context, excluded_intents
+                )
+                self._pipeline_context.current_intent = intent_result.get(
+                    "intent", "unknown"
+                )
+                self._pipeline_context.current_confidence = intent_result.get(
+                    "confidence", 0.0
                 )
                 logger.debug(
-                    f"Staying in interaction. Response: {response_payload}, Hint: {hint}"
+                    f"Intent: {self._pipeline_context.current_intent} Conf: {self._pipeline_context.current_confidence:.2f}"
                 )
-                return response_payload, hint
+            except Exception:
+                logger.exception("Error during intent classification.")
+                self._pipeline_context.current_intent = "unknown"
+                self._pipeline_context.current_confidence = 0.0
+                # TODO: Decide if we should return error NLUResult here?
+                # For now, continue with unknown intent.
 
-        # --- If NOT in interaction mode, run the standard NLU Pipeline --- #
-        else:
-            logger.debug("Not in interaction mode. Running standard NLU pipeline.")
-            # --- Updated Logic: Call pipeline steps sequentially ---
-            pipeline_interaction_payload: Optional[Tuple[Dict[str, Any], str]] = None
-
-            # 1. Classify Intent and Handle Clarification
-            pipeline_interaction_payload = (
-                self._classify_intent_and_handle_clarification(query)
-            )
-            if pipeline_interaction_payload:
-                return (
-                    pipeline_interaction_payload[0],
-                    pipeline_interaction_payload[1],
-                )  # Return interaction prompt
-
-            # 2. Extract Parameters and Handle Validation
-            pipeline_interaction_payload = (
-                self._extract_parameters_and_handle_validation(query)
-            )
-            if pipeline_interaction_payload:
-                return (
-                    pipeline_interaction_payload[0],
-                    pipeline_interaction_payload[1],
-                )  # Return interaction prompt
-
-            # 3. Generate Final Response
-            final_result, final_hint = self._generate_final_response()
-            return final_result, final_hint
-
-    def _run_nlu_pipeline(self, query: str) -> Tuple[Dict[str, Any], str]:
-        """(Internal) Executes the core NLU pipeline steps by calling helper methods.
-
-        DEPRECATED in favor of calling steps directly, but kept for potential fallback/simplicity.
-        Handles transitions INTO interaction modes.
-        """
-        logger.debug("Executing _run_nlu_pipeline (calling sequential steps)...")
-
-        # 1. Classify Intent and Handle Clarification
-        interaction_payload = self._classify_intent_and_handle_clarification(query)
-        if interaction_payload:
-            return (
-                interaction_payload[0],
-                interaction_payload[1],
-            )  # Return interaction prompt
-
-        # 2. Extract Parameters and Handle Validation
-        interaction_payload = self._extract_parameters_and_handle_validation(query)
-        if interaction_payload:
-            return (
-                interaction_payload[0],
-                interaction_payload[1],
-            )  # Return interaction prompt
-
-        # 3. Generate Final Response
-        final_result, final_hint = self._generate_final_response()
-        return final_result, final_hint
-
-    # --- Refactored Pipeline Steps ---
-
-    def _classify_intent_and_handle_clarification(
-        self, query: str
-    ) -> Optional[Tuple[Dict[str, Any], str]]:
-        """(Internal) Step 1: Classify intent and handle potential clarification.
-
-        Updates self._pipeline_context with intent and confidence.
-        If clarification is needed, sets interaction mode and returns interaction payload.
-        Otherwise, returns None.
-        """
-        logger.debug("Pipeline Step 1: Classifying intent...")
-        try:
-            intent_result = self._intent_detector.classify_intent(
-                query, self._pipeline_context
-            )  # Pass context
-            identified_intent = intent_result.get("intent", "unknown_intent")
-            confidence = intent_result.get("confidence", 0.0)
-            clarification_options = intent_result.get(
-                "options"
-            )  # Assume detector might return this
-
-            logger.debug(
-                f"Intent Classified: {identified_intent} (Confidence: {confidence:.2f})"
-            )
-            # Update context with initial intent/confidence
-            self._pipeline_context.current_intent = identified_intent
-            self._pipeline_context.confidence_score = confidence
-
-        except Exception as e:
-            logger.error(f"Error during Intent Classification: {e}", exc_info=True)
-            # Raise or return error payload? Let's return error payload for run() to handle
-            # This step shouldn't return the final error, maybe raise?
-            # For now, log and let later steps fail or return error from run()
-            # We need a consistent error handling strategy.
-            # Let's return an error payload similar to interactions for now.
-            return {
-                "error": "Intent classification failed"
-            }, "error"  # Return error tuple
-
-        # --- Decision Point: Enter Clarification? ---
-        clarification_threshold = 0.7  # TODO: Configurable
-        if (
-            confidence < clarification_threshold
-            and identified_intent != "unknown_intent"
-        ):
-            logger.info(
-                f"Confidence {confidence:.2f} below threshold {clarification_threshold}. Checking for clarification options."
-            )
-            if clarification_options:
-                logger.info("Entering clarification mode.")
-                from .nlu_pipeline.interaction_models import ClarificationData
+            # 1.a. Decision Point: Intent Clarification
+            clarification_threshold = 0.6
+            if (
+                self._pipeline_context.current_intent != "unknown"
+                # Check confidence is not None before comparing
+                and self._pipeline_context.current_confidence is not None
+                and self._pipeline_context.current_confidence < clarification_threshold
+            ):
+                logger.info(
+                    f"Intent confidence low ({self._pipeline_context.current_confidence:.2f}). Entering clarification."
+                )
+                # TODO: Get clarification options (e.g., top N intents from detector?)
+                # Ensure current_intent is not None before adding
+                clarification_options = []
+                if self._pipeline_context.current_intent:
+                    clarification_options.append(self._pipeline_context.current_intent)
+                clarification_options.append("other_intent_example")  # Placeholder
 
                 clar_data = ClarificationData(
-                    user_input=query,  # Pass original query
-                    options=clarification_options,
-                    original_query=query,
+                    prompt="Which command did you mean?", options=clarification_options
                 )
                 self._pipeline_context.interaction_mode = (
                     InteractionState.CLARIFYING_INTENT
                 )
                 self._pipeline_context.interaction_data = clar_data
-
-                handler = self._interaction_handlers[InteractionState.CLARIFYING_INTENT]
-                prompt = handler.get_initial_prompt(self._pipeline_context)
-                payload = {
-                    "interaction_prompt": prompt,
-                    "interaction_mode": InteractionState.CLARIFYING_INTENT,
-                }
-                hint = "awaiting_clarification"
-                logger.debug(
-                    f"Clarification needed. Returning interaction payload: {payload}, Hint: {hint}"
+                handler = self._interaction_handlers.get(
+                    InteractionState.CLARIFYING_INTENT
                 )
-                return payload, hint
+
+                if handler:
+                    try:
+                        clarification_prompt = handler.get_initial_prompt(
+                            self._pipeline_context
+                        )
+                        # Log interaction start
+                        clarification_log_entry: InteractionLogEntry = (
+                            InteractionState.CLARIFYING_INTENT.value,
+                            clarification_prompt,
+                            None,
+                        )
+                        self._pipeline_context.recorded_interactions.append(
+                            clarification_log_entry
+                        )
+                        self._pipeline_context.last_prompt_shown = clarification_prompt
+
+                        # Return NLUResult indicating clarification needed
+                        conv_detail = ConversationDetail(
+                            interactions=self._pipeline_context.recorded_interactions,
+                            response_text=clarification_prompt,
+                        )
+                        return NLUResult(
+                            command=None,  # Intent is not confirmed yet
+                            parameters={},
+                            confidence=None,
+                            code_execution_result=None,
+                            conversation_detail=conv_detail,
+                        )
+                    except Exception:
+                        logger.exception(
+                            "Error getting clarification prompt. Aborting clarification."
+                        )
+                        self._pipeline_context.interaction_mode = InteractionState.IDLE
+                        self._pipeline_context.interaction_data = None
+                else:
+                    logger.error("Clarification handler not found!")
+                    self._pipeline_context.interaction_mode = (
+                        InteractionState.IDLE
+                    )  # Reset state
+
+            # If clarification wasn't entered, proceed to next step flag
+            goto_step = "param_extraction"
+
+        if goto_step == "param_extraction":
+            logger.debug("Running main NLU pipeline: Step 2 - Parameter Extraction")
+            # 2. Parameter Extraction (only if intent is known)
+            validation_requests: List[ValidationRequestInfo] = []
+            # Preserve params if proceeding immediately from intent clarification
+            # params_before_extraction = self._pipeline_context.current_parameters.copy()
+
+            if (
+                self._pipeline_context.current_intent
+                and self._pipeline_context.current_intent != "unknown"
+            ):
+                try:
+                    # Pass user_query, but extractor should rely on context.current_intent
+                    extracted_params, validation_requests = (
+                        self._param_extractor.identify_parameters(
+                            user_query,  # This might be the interaction response!
+                            self._pipeline_context.current_intent,
+                            self._pipeline_context,
+                        )
+                    )
+                    # If proceeding from intent clarification, merge/update params?
+                    # No, context should already be updated by handler. Replace params.
+                    # if self._pipeline_context.interaction_mode != InteractionState.IDLE:
+                    #      # If we are here after proceed_immediately, context should be updated.
+                    #      # Don't overwrite params set by interaction handler?
+                    #      pass # Trust context params set by handler
+                    # else:
+                    # If running fresh, set extracted params
+                    self._pipeline_context.current_parameters = extracted_params
+
+                    logger.debug(
+                        f"Parameters updated: {self._pipeline_context.current_parameters}"
+                    )
+                    logger.debug(
+                        f"Validation requests generated: {validation_requests}"
+                    )
+                except Exception:
+                    logger.exception("Error during parameter extraction.")
+                    # Restore params if proceeding from interaction?
+                    # if self._pipeline_context.interaction_mode != InteractionState.IDLE:
+                    #    self._pipeline_context.current_parameters = params_before_extraction
+                    # else:
+                    # If running fresh and extraction fails, clear params
+                    self._pipeline_context.current_parameters = {}
+                    # Continue, but parameters might be missing
+
+            # 2.a. Decision Point: Parameter Validation
+            if validation_requests:
+                request = validation_requests[0]
+                logger.info(
+                    f"Required parameter '{request.parameter_name}' missing/invalid ({request.reason}). Entering validation."
+                )
+                val_data = ValidationData(
+                    parameter_name=request.parameter_name,
+                    reason=request.reason,
+                    current_value=request.current_value,
+                    prompt=f"What value should I use for '{request.parameter_name}'?",  # Placeholder
+                )
+                self._pipeline_context.interaction_mode = (
+                    InteractionState.VALIDATING_PARAMETER
+                )
+                self._pipeline_context.interaction_data = val_data
+                handler = self._interaction_handlers.get(
+                    InteractionState.VALIDATING_PARAMETER
+                )
+
+                if handler:
+                    try:
+                        validation_prompt = handler.get_initial_prompt(
+                            self._pipeline_context
+                        )
+                        validation_log_entry: InteractionLogEntry = (
+                            InteractionState.VALIDATING_PARAMETER.value,
+                            validation_prompt,
+                            None,
+                        )
+                        self._pipeline_context.recorded_interactions.append(
+                            validation_log_entry
+                        )
+                        self._pipeline_context.last_prompt_shown = validation_prompt
+                        conv_detail = ConversationDetail(
+                            interactions=self._pipeline_context.recorded_interactions,
+                            response_text=validation_prompt,
+                        )
+                        logger.debug(
+                            "Validation triggered. Returning NLUResult with prompt."
+                        )  # Added logging
+                        return NLUResult(
+                            command=self._pipeline_context.current_intent,
+                            parameters=self._pipeline_context.current_parameters,
+                            confidence=self._pipeline_context.current_confidence,
+                            code_execution_result=None,
+                            conversation_detail=conv_detail,
+                        )
+                    except Exception:
+                        logger.exception(
+                            "Error during validation prompt generation/return. Aborting validation."
+                        )
+                        self._pipeline_context.interaction_mode = InteractionState.IDLE
+                        self._pipeline_context.interaction_data = None
+                else:
+                    logger.error("Validation handler not found!")
+                    self._pipeline_context.interaction_mode = InteractionState.IDLE
+
+            goto_step = "code_execution"  # Move to next step if validation not entered or handled
+
+        if goto_step == "code_execution":
+            logger.debug("Running main NLU pipeline: Step 3 - Code Execution")
+            # 3. Code Execution (Optional)
+            code_exec_result: Optional[Dict[str, Any]] = None
+            if (
+                self._pipeline_context.current_intent
+                and self._pipeline_context.current_intent != "unknown"
+            ):
+                intent_meta = self._command_metadata.get(
+                    self._pipeline_context.current_intent, {}
+                )
+                executable_code: Optional[Callable] = intent_meta.get("executable_code")
+
+                if callable(executable_code):
+                    logger.debug(
+                        f"Found executable code for intent: {self._pipeline_context.current_intent}"
+                    )
+                    try:
+                        # Pass only parameters for now, could pass context if needed
+                        code_exec_result = executable_code(
+                            self._pipeline_context.current_parameters
+                        )
+                        logger.info(
+                            f"Code execution successful. Result: {code_exec_result}"
+                        )
+                    except Exception as e:
+                        logger.exception(
+                            f"Error executing code for intent {self._pipeline_context.current_intent}"
+                        )
+                        code_exec_result = {
+                            "error": f"Execution failed: {e}"
+                        }  # Store error in result
+                else:
+                    logger.debug(
+                        f"No executable code found or configured for intent: {self._pipeline_context.current_intent}"
+                    )
+
+            # Proceed to next step flag
+            goto_step = "text_generation"
+
+        if goto_step == "text_generation":
+            logger.debug("Running main NLU pipeline: Step 4 - Text Generation")
+            # 4. Text Generation (Optional)
+            text_response: Optional[str] = None
+            if self._text_generator:
+                # Generate text even for unknown intent to provide feedback
+                intent_to_generate = self._pipeline_context.current_intent or "unknown"
+                params_to_generate = self._pipeline_context.current_parameters
+
+                try:
+                    text_response = self._text_generator.generate_text(
+                        intent_to_generate,
+                        params_to_generate,
+                        code_exec_result,  # Pass code result (might be None)
+                        self._pipeline_context,
+                    )
+                    logger.debug(f"Generated text response: {text_response}")
+                except Exception:
+                    logger.exception("Error during text generation.")
+                    text_response = (
+                        "Sorry, I encountered an error generating a response."
+                    )
             else:
-                logger.warning(
-                    "Clarification potentially needed, but no options provided. Proceeding with low confidence intent."
-                )
-                # Proceed to next step
+                logger.debug("No text generator configured.")
 
-        logger.debug(
-            "Pipeline Step 1: Intent classification complete (no clarification needed)."
+        # 5. Final Result Construction
+        final_conv_detail = ConversationDetail(
+            interactions=self._pipeline_context.recorded_interactions,
+            response_text=text_response,
         )
-        return None  # No interaction triggered
-
-    def _extract_parameters_and_handle_validation(
-        self, query: str
-    ) -> Optional[Tuple[Dict[str, Any], str]]:
-        """(Internal) Step 2: Extract parameters and handle potential validation.
-
-        Uses intent from self._pipeline_context. Updates context with parameters.
-        If validation is needed, sets interaction mode and returns interaction payload.
-        Otherwise, returns None.
-        """
-        logger.debug("Pipeline Step 2: Extracting parameters...")
-        identified_intent = self._pipeline_context.current_intent
-        if not identified_intent or identified_intent == "unknown_intent":
-            logger.debug("Skipping parameter extraction for unknown or missing intent.")
-            self._pipeline_context.current_parameters = {}  # Ensure params are empty
-            return None  # Nothing to extract or validate
-
-        try:
-            parameters, validation_requests = self._param_extractor.identify_parameters(
-                query, identified_intent, self._pipeline_context
-            )  # Pass context
-            logger.debug(f"Parameters Extracted: {parameters}")
-            logger.debug(f"Validation Requests: {validation_requests}")
-            # Update context
-            self._pipeline_context.current_parameters = parameters
-
-        except Exception as e:
-            logger.error(f"Error during Parameter Extraction: {e}", exc_info=True)
-            # Return error payload
-            return {"error": "Parameter extraction failed"}, "error"
-
-        # --- Decision Point: Enter Validation? ---
-        if validation_requests:
-            validation_request = validation_requests[0]  # Handle one at a time
-            # Break long log message
-            log_message = (
-                f"Validation required for parameter: {validation_request.parameter_name}. "
-                f"Reason: {validation_request.reason}. Entering validation."
-            )
-            logger.info(log_message)
-            from .nlu_pipeline.interaction_models import ValidationData
-
-            # Construct ValidationData
-            error_msg = f"Missing required parameter: {validation_request.parameter_name}"  # Basic message
-            if validation_request.reason == "invalid_format":
-                error_msg = f"Invalid format for {validation_request.parameter_name}. Please provide a valid value."
-            # TODO: Improve error message generation based on param_meta type etc.
-
-            val_data = ValidationData(
-                user_input=query,  # Pass original query
-                parameter_name=validation_request.parameter_name,
-                error_message=error_msg,
-                current_value=validation_request.current_value,  # Pass if available
-            )
-            self._pipeline_context.interaction_mode = (
-                InteractionState.VALIDATING_PARAMETER
-            )
-            self._pipeline_context.interaction_data = val_data
-
-            handler = self._interaction_handlers[InteractionState.VALIDATING_PARAMETER]
-            prompt = handler.get_initial_prompt(self._pipeline_context)
-            payload = {
-                "interaction_prompt": prompt,
-                "interaction_mode": InteractionState.VALIDATING_PARAMETER,
-            }
-            hint = "awaiting_validation"
-            logger.debug(
-                f"Validation needed. Returning interaction payload: {payload}, Hint: {hint}"
-            )
-            return payload, hint
-
-        logger.debug(
-            "Pipeline Step 2: Parameter extraction complete (no validation needed)."
+        final_nlu_result = NLUResult(
+            command=self._pipeline_context.current_intent,
+            parameters=self._pipeline_context.current_parameters,
+            confidence=self._pipeline_context.current_confidence,
+            code_execution_result=code_exec_result,
+            conversation_detail=final_conv_detail,
         )
-        return None  # No interaction triggered
 
-    def _generate_final_response(self) -> Tuple[Dict[str, Any], str]:
-        """(Internal) Step 3: Generate the final response text.
-
-        Uses intent and parameters from self._pipeline_context.
-        Returns the final NLU result payload and hint.
-        """
-        logger.debug("Pipeline Step 3: Generating final response...")
-        identified_intent = self._pipeline_context.current_intent
-        parameters = self._pipeline_context.current_parameters
-        confidence = self._pipeline_context.confidence_score
-
-        if not identified_intent or identified_intent == "unknown_intent":
-            logger.debug("Generating response for unknown intent.")
-            # Handle unknown intent response generation specifically
-            # Maybe call text generator with a special intent key?
-            # For now, return minimal payload
-            return {
-                "intent": "unknown_intent",
-                "parameters": {},
-                "confidence": confidence,
-                "raw_response": None,
-                "response_text": "Sorry, I didn't understand that.",  # Default unknown response
-            }, "unknown_intent"
-
-        try:
-            # Revert: Pass context again, as required by the interface
-            raw_response, response_text = self._text_generator.generate_response(
-                identified_intent, parameters, self._pipeline_context
-            )
-            logger.debug(f"Generated Raw Response: {raw_response}")
-            logger.debug(f"Generated Response Text: {response_text}")
-        except Exception as e:
-            logger.error(f"Error during Response Generation: {e}", exc_info=True)
-            # Return error payload
-            return {"error": "Response generation failed"}, "error"
-
-        # Final successful NLU result
-        nlu_result: Dict[str, Any] = {
-            "intent": identified_intent,
-            "parameters": parameters,
-            "confidence": confidence,
-            "raw_response": raw_response,
-            "response_text": response_text,
-        }
-        hint = "new_conversation"  # Standard success hint
-
-        # Potentially update internal history state here if needed
-        # self._pipeline_context.conversation_history.append(...)? -> Context needs history attr
-
-        logger.info(f"TalkEngine run() completed. Intent: {identified_intent}")
-        logger.debug("Pipeline Step 3: Response generation complete.")
-        return nlu_result, hint
+        logger.info(f"TalkEngine run() completed. Result: {final_nlu_result}")
+        return final_nlu_result
 
     def reset(
         self,
         command_metadata: Dict[str, Any],
         conversation_history: Optional[List[Dict[str, Any]]] = None,
-        nlu_overrides: Optional[Dict[str, NLUImplementation]] = None,  # Corrected hint
+        nlu_overrides: Optional[Mapping[str, NLUImplementation]] = None,
     ) -> None:
         """Resets and re-initializes the engine with new data."""
         logger.info("Resetting TalkEngine...")

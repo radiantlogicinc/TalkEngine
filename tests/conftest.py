@@ -2,18 +2,18 @@
 
 import shutil
 from pathlib import Path
-from typing import Union
+from typing import Union, Dict
 import pytest
 from unittest.mock import MagicMock
 
 from talkengine.nlu_pipeline.nlu_engine_interfaces import (
     IntentDetectionInterface,
     ParameterExtractionInterface,
-    ResponseGenerationInterface,
+    TextGenerationInterface,
 )
 
 # Import context and interaction models needed for fixtures/tests
-from talkengine.nlu_pipeline.models import NLUPipelineContext, InteractionState
+from talkengine.models import NLUPipelineContext, InteractionState
 from talkengine.nlu_pipeline.interaction_handlers import (
     ClarificationHandler,
     ValidationHandler,
@@ -74,8 +74,8 @@ def mock_param_extractor():
 
 @pytest.fixture
 def mock_text_generator():
-    mock = MagicMock(spec=ResponseGenerationInterface)
-    mock.generate_response.return_value = ({"mock_raw": True}, "mock_text")
+    mock = MagicMock(spec=TextGenerationInterface)
+    mock.generate_text.return_value = "mock_text"
     return mock
 
 
@@ -87,7 +87,16 @@ def default_pipeline_context():
 
 # Fixture for providing NLU overrides
 @pytest.fixture
-def mock_nlu_overrides(mock_intent_detector, mock_param_extractor, mock_text_generator):
+def mock_nlu_overrides(
+    mock_intent_detector: MagicMock,
+    mock_param_extractor: MagicMock,
+    mock_text_generator: MagicMock,
+) -> Dict[
+    str,
+    Union[
+        IntentDetectionInterface, ParameterExtractionInterface, TextGenerationInterface
+    ],
+]:
     return {
         "intent_detection": mock_intent_detector,
         "param_extraction": mock_param_extractor,
@@ -128,7 +137,10 @@ def mock_validation_handler():
 
 # Fixture to provide mock interaction handlers to the engine
 @pytest.fixture
-def mock_interaction_handlers(mock_clarification_handler, mock_validation_handler):
+def mock_interaction_handlers(
+    mock_clarification_handler: MagicMock,
+    mock_validation_handler: MagicMock,
+) -> Dict[InteractionState, MagicMock]:
     return {
         InteractionState.CLARIFYING_INTENT: mock_clarification_handler,
         InteractionState.VALIDATING_PARAMETER: mock_validation_handler,

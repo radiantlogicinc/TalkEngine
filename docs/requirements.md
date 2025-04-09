@@ -48,20 +48,34 @@ FR-1.6: `TalkEngine` shall provide a placeholder `train()` method.
 
 ### 3.2 NLU Processing (`run` method)
 FR-2.1: `TalkEngine` shall provide a `run(query: str)` method.
-FR-2.2: The `run()` method shall process the input query using the configured NLU components (intent detector, parameter extractor, text generator).
+FR-2.2: The `run()` method shall process the input query using the configured NLU components (intent detector, parameter extractor) and internal logic for response generation (optional code execution, optional text generation).
 FR-2.3: The `run()` method shall return a tuple containing:
-    a) An NLU result dictionary including `intent`, `parameters`, `confidence`, `raw_response`, and `response_text`.
-    b) A hint string (currently always `'new_conversation'`).
-FR-2.4: Intent classification shall map the query to a command key defined in the metadata or `'unknown'`.
-FR-2.5: Parameter extraction shall return a dictionary of identified parameter names and values.
-FR-2.6: Text generation shall produce a structured raw response and a user-readable text summary.
+    a) The original user query string.
+    b) A list of `NLUResult` objects. Each object represents one attempt to process the query through the NLU pipeline. Initially, this list will contain one result. Subsequent results may be added if the calling application triggers a re-run based on feedback (See FR-2.9).
+FR-2.4: Each `NLUResult` object shall be a Pydantic BaseModel containing:
+    a) `command` (str): The identified command key from the metadata, or `'unknown'`.
+    b) `parameters` (Optional[dict]): A dictionary of extracted parameter names and values.
+    c) `confidence` (Optional[float]): The confidence score of the intent classification.
+    d) `code_execution_result` (Optional[dict]): The result returned from executing code associated with the identified command, if any.
+    e) `conversation_detail` (ConversationDetail): An object containing details about the interaction flow for this attempt (See FR-2.5).
+FR-2.5: The `ConversationDetail` object within `NLUResult` shall be a Pydantic BaseModel containing:
+    a) `interactions` (list): A list of tuples or objects, each documenting a step in any interactive sub-dialogue (e.g., clarification, validation). Each entry should record the interaction stage/type, the prompt presented to the user, and the user's feedback/response during that interaction step.
+    b) `response_text` (Optional[str]): The final user-facing text generated for this attempt, if any.
+FR-2.6: Intent classification shall identify a command key defined in the metadata (or `'unknown'`) and its confidence, contributing to the `command` and `confidence` fields of the `NLUResult`.
+FR-2.7: Parameter extraction shall identify parameter names and values, contributing to the `parameters` field of the `NLUResult`.
+FR-2.8: The response generation phase shall consist of two optional steps orchestrated by the `TalkEngine`:
+    a) Code Execution: If executable code (e.g., a function reference) is associated with the identified command in the `command_metadata`, the `TalkEngine` shall execute it with the extracted `parameters`. The result populates the `code_execution_result` field of the `NLUResult`.
+    b) Text Generation: If a text generator component is configured (via overrides or default), the `TalkEngine` shall invoke it to generate a user-facing response based on the `command`, `parameters`, and optional `code_execution_result`. The result populates the `response_text` field of the `ConversationDetail`.
+    c) Both Code Execution and Text Generation are optional. A command may be configured with neither, one, or both.
+FR-2.9: The `run` method shall accept an optional argument to exclude specific command intents from the classification step. This allows a calling application to re-invoke `run` if initial results are unsatisfactory (e.g., user feedback indicates the wrong command was inferred), preventing the same incorrect command from being chosen again in the subsequent attempt. The new `NLUResult` from the re-run is appended to the list returned by `run`.
 
 ### 3.3 Interaction Handling
-FR-3.1: The system shall support entering distinct interaction modes when needed (e.g., intent clarification, parameter validation, feedback collection).
+FR-3.1: The system shall support entering distinct interaction modes when needed (e.g., intent clarification, parameter validation).
 FR-3.2: The system shall provide mechanisms (handlers) to manage the dialogue flow within each interaction mode, including generating prompts and processing user responses specific to that mode.
 FR-3.3: The system shall define specific data structures to carry the necessary context and information for each interaction mode (e.g., clarification options, parameter to validate).
-FR-3.4: Upon successful completion of an interaction mode, the system shall update its internal state (e.g., clarified intent, validated parameter) and potentially resume the main NLU pipeline processing.
-FR-3.5: The system shall allow exiting an interaction mode based on user input or internal logic.
+FR-3.4: Each step taken within an interaction mode (prompt generated, user feedback received) shall be recorded in the `interactions` list within the `ConversationDetail` object of the current `NLUResult`.
+FR-3.5: Upon successful completion of an interaction mode, the system shall update its internal state (e.g., clarified intent, validated parameter) and potentially resume the main NLU pipeline processing for the current attempt.
+FR-3.6: The system shall allow exiting an interaction mode based on user input or internal logic.
 
 ## 4. Non-Functional Requirements
 

@@ -12,7 +12,7 @@ from .interaction_models import (
     FeedbackData,
     ValidationData,
 )
-from .models import NLUPipelineContext
+from ..models import NLUPipelineContext, InteractionLogEntry
 
 
 @dataclass
@@ -58,7 +58,11 @@ class InteractionHandler(ABC):
     def handle_input(
         self, user_message: str, context: NLUPipelineContext
     ) -> InteractionResult:
-        """Processes user input while in this mode. Assumes interaction_data is set."""
+        """Processes user input while in this mode.
+
+        Implementations should log the interaction (last prompt + user input)
+        to context.recorded_interactions.
+        """
 
 
 # --- Concrete Handler Implementations (Placeholders) ---
@@ -82,6 +86,15 @@ class ClarificationHandler(InteractionHandler):
     def handle_input(
         self, user_message: str, context: NLUPipelineContext
     ) -> InteractionResult:
+        # Log the interaction before processing
+        if context.last_prompt_shown:
+            log_entry: InteractionLogEntry = (
+                context.interaction_mode.value,
+                context.last_prompt_shown,
+                user_message,
+            )
+            context.recorded_interactions.append(log_entry)
+
         data = self._get_typed_data(context)
         if not data or not isinstance(data, ClarificationData):
             return InteractionResult(
@@ -122,12 +135,28 @@ class ValidationHandler(InteractionHandler):
         if not data or not isinstance(data, ValidationData):
             return "Sorry, there was an error requesting parameter information."  # Fallback
 
+        # Use the prompt template and parameter name
         prompt = data.prompt.format(parameter_name=data.parameter_name)
-        return f"{data.error_message}\n{prompt}"
+        # Construct a message based on the reason
+        reason_msg = f"Missing required information for {data.parameter_name}."
+        if data.reason == "invalid_format":
+            reason_msg = f"Invalid format provided for {data.parameter_name}."
+        # Add more reason handling if needed
+
+        return f"{reason_msg}\n{prompt}"
 
     def handle_input(
         self, user_message: str, context: NLUPipelineContext
     ) -> InteractionResult:
+        # Log the interaction before processing
+        if context.last_prompt_shown:
+            log_entry: InteractionLogEntry = (
+                context.interaction_mode.value,
+                context.last_prompt_shown,
+                user_message,
+            )
+            context.recorded_interactions.append(log_entry)
+
         data = self._get_typed_data(context)
         if not data or not isinstance(data, ValidationData):
             return InteractionResult(
@@ -177,6 +206,15 @@ class FeedbackHandler(InteractionHandler):
     def handle_input(
         self, user_message: str, context: NLUPipelineContext
     ) -> InteractionResult:
+        # Log the interaction before processing
+        if context.last_prompt_shown:
+            log_entry: InteractionLogEntry = (
+                context.interaction_mode.value,
+                context.last_prompt_shown,
+                user_message,
+            )
+            context.recorded_interactions.append(log_entry)
+
         data = self._get_typed_data(context)
         if not data or not isinstance(data, FeedbackData):
             return InteractionResult(

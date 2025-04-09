@@ -10,14 +10,14 @@ from pydantic import BaseModel
 class BaseInteractionData(BaseModel):
     """Base model for data passed to interaction handlers."""
 
-    user_input: str
+    # user_input: str # Removed - No longer needed here
 
 
 class ClarificationData(BaseInteractionData):
     """Data needed for intent clarification."""
 
     options: List[str]  # List of intent names or descriptions to choose from
-    original_query: str
+    # original_query: str # Removed - No longer needed here
     prompt: str = "Please choose one of the following options:"  # Default prompt
 
 
@@ -25,7 +25,8 @@ class ValidationData(BaseInteractionData):
     """Data needed for parameter validation."""
 
     parameter_name: str
-    error_message: str
+    # error_message: str # Removed - Engine generates prompt contextually now
+    reason: str  # Added reason from ValidationRequestInfo
     current_value: Optional[Any] = None
     prompt: str = (
         "Please provide a valid value for {parameter_name}:"  # Default prompt template

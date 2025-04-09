@@ -6,7 +6,7 @@ Provides a basic keyword/substring matching implementation.
 from typing import Any, Dict, List, Optional
 
 from talkengine.nlu_pipeline.nlu_engine_interfaces import IntentDetectionInterface
-from talkengine.nlu_pipeline.models import NLUPipelineContext
+from ..models import NLUPipelineContext
 from talkengine.utils.logging import logger
 
 
@@ -111,29 +111,30 @@ class DefaultIntentDetection(IntentDetectionInterface):
     ) -> Dict[str, Any]:
         """Default implementation using keyword/substring matching."""
         logger.debug("Classifying intent for: %s", user_input)
-        excluded = excluded_intents or context.excluded_intents or []
+        excluded_set = set(excluded_intents) if excluded_intents else set()
 
         # Use command keys stored during initialization
-        available_commands = [cmd for cmd in self._command_keys if cmd not in excluded]
+        available_commands = [
+            cmd for cmd in self._command_keys if cmd not in excluded_set
+        ]
 
-        if available_commands:
-            matched_command, match_type = self._find_best_match(
-                available_commands, user_input
-            )
-
-            if matched_command:
-                intent = matched_command
-                # Confidence based on match type (simple heuristic)
-                confidence = 0.9 if match_type == 2 else 0.7
-                # TODO: Potentially return multiple matches if ambiguous, for clarification
-                # Example: If multiple commands have match_type 1, return them in 'options'?
-                # For now, just return the first/best based on simple logic.
-            else:
-                intent = "unknown"
-                confidence = 0.1
-        else:
+        if not available_commands:
+            logger.debug("No available commands after excluding: %s", excluded_set)
             intent = "unknown"
             confidence = 0.0
+            return {"intent": intent, "confidence": confidence}
+
+        matched_command, match_type = self._find_best_match(
+            available_commands, user_input
+        )
+
+        if matched_command:
+            intent = matched_command
+            # Confidence based on match type (simple heuristic)
+            confidence = 0.9 if match_type == 2 else 0.7
+        else:
+            intent = "unknown"
+            confidence = 0.1
 
         result = {"intent": intent, "confidence": confidence}
         logger.debug("Classified intent result: %s", result)

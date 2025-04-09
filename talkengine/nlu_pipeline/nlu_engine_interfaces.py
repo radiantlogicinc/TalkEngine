@@ -6,8 +6,8 @@ Defines abstract interfaces for core NLU components.
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional, Tuple
 
-# Import necessary types
-from .models import NLUPipelineContext
+# Import necessary types - Corrected path
+from ..models import NLUPipelineContext
 from .interaction_models import ValidationRequestInfo
 
 
@@ -76,31 +76,33 @@ class ParameterExtractionInterface(ABC):
 
 
 # pylint: disable=too-few-public-methods
-class ResponseGenerationInterface(ABC):
-    """Interface for generating response text and raw response data.
+class TextGenerationInterface(ABC):
+    """Interface for generating user-facing response text.
 
     Implementations might use simple formatting or more complex generation logic.
+    They receive the intent, parameters, and potentially the result of any
+    executed command code.
     """
 
     @abstractmethod
-    def generate_response(
+    def generate_text(
         self,
         intent: str,
         parameters: Dict[str, Any],
+        code_execution_result: Optional[Dict[str, Any]],
         context: NLUPipelineContext,
-    ) -> Tuple[Any, str]:
-        """Generate raw response data and a user-facing text response.
+    ) -> Optional[str]:
+        """Generate a user-facing text response.
 
         Args:
             intent: The classified intent (command key).
             parameters: The extracted parameters.
+            code_execution_result: Result from executing code associated with the
+                                     command, if any.
             context: The current NLU pipeline context.
 
         Returns:
-            A tuple containing:
-            1. Raw Response (Any): Structured data representing the NLU outcome
-               (e.g., a dictionary with intent and parameters).
-            2. Response Text (str): A user-friendly string representation.
+            A user-friendly string representation, or None if no text is generated.
         """
-        # Default implementation could return ({"intent": intent, "parameters": parameters}, str(parameters))
+        # Default implementation could return a simple string or None
         raise NotImplementedError

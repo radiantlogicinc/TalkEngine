@@ -35,19 +35,33 @@ pip install talkengine
 ```python
 import logging
 from talkengine import TalkEngine
+from talkengine.nlu_pipeline.models import NLUResult # Import NLUResult
+from typing import Optional # For executable example
 
 # Configure logging to see internal steps
 logging.basicConfig(level=logging.INFO)
 
 # 1. Define your command metadata
+def add_numbers(params: dict) -> Optional[dict]:
+    """Example function to be executed."""
+    try:
+        num1 = int(params.get("num1", 0))
+        num2 = int(params.get("num2", 0))
+        result = num1 + num2
+        return {"sum": result} # Return result in a dictionary
+    except ValueError:
+        return {"error": "Invalid number input"}
+
 command_metadata = {
     "calculator.add": {
         "description": "Adds two numbers together.",
-        "parameters": {"num1": "int", "num2": "int"} # Parameter types are informational for now
+        "parameters": {"num1": "int", "num2": "int"},
+        "executable_code": add_numbers # Add reference to executable function
     },
     "weather.get_forecast": {
         "description": "Gets the weather forecast for a location.",
         "parameters": {"location": "str", "date": "str"}
+        # No executable_code for this one
     },
 }
 
@@ -57,15 +71,14 @@ conversation_history = [
     # Add previous NLU results if available for context
 ]
 
-# 3. (Optional) Define NLU overrides (using default implementations here)
-# See example in talkengine/engine.py for custom override structure
+# 3. (Optional) Define NLU overrides
 nlu_overrides = {}
 
 # 4. Initialize the engine
 engine = TalkEngine(
     command_metadata=command_metadata,
-    conversation_history=conversation_history, # Optional
-    nlu_overrides=nlu_overrides # Optional
+    conversation_history=conversation_history,
+    nlu_overrides=nlu_overrides
 )
 
 # 5. Train the engine (currently a placeholder)
@@ -78,27 +91,40 @@ while True:
     if user_query.lower() == 'quit':
         break
 
-    nlu_result, hint = engine.run(user_query)
+    # engine.run() now returns a single NLUResult object
+    # excluded_intents can be optionally passed if needed
+    result: NLUResult = engine.run(user_query)
 
-    print(f"  Hint: {hint}") # Currently always "new_conversation"
+    # Check if the engine is prompting for clarification or validation
+    # The context object inside the engine tracks the interaction mode
+    if engine._pipeline_context.interaction_mode != InteractionState.IDLE:
+        print(f"  Interaction Required ({engine._pipeline_context.interaction_mode.name}):")
+        # The prompt is now in the response_text field of conversation_detail
+        print(f"  Prompt: {result.conversation_detail.response_text}")
+        # Your application logic would handle this interaction
+        # (e.g., get user input and call engine.run() again)
+        continue # Skip printing normal results for this example
 
-    # Note: If the engine needs clarification or parameter validation,
-    # the nlu_result dictionary will contain an 'interaction_prompt'
-    # key instead of 'intent', 'parameters', etc.
-    # The 'hint' will indicate the interaction state (e.g., 'awaiting_clarification').
-    # Your application logic should handle these interaction prompts.
-
-    print(f"  Intent: {nlu_result.get('intent', 'N/A')}")
-    print(f"  Confidence: {nlu_result.get('confidence', 0.0):.2f}")
-    print(f"  Parameters: {nlu_result.get('parameters', {})}")
-    # print(f"  Raw Response: {nlu_result.get('raw_response')}") # Internal data structure
-    print(f"  Response Text: {nlu_result.get('response_text')}") # Basic text summary
+    # --- Display final NLU results --- 
+    print(f"  Command: {result.command or 'N/A'}")
+    print(f"  Confidence: {result.confidence:.2f}" if result.confidence is not None else "  Confidence: N/A")
+    print(f"  Parameters: {result.parameters or {}}")
+    # Check if code was executed
+    if result.code_execution_result:
+        print(f"  Code Execution Result: {result.code_execution_result}")
+    # Check the generated response text (if any)
+    if result.conversation_detail.response_text:
+        print(f"  Response Text: {result.conversation_detail.response_text}")
+    else:
+        print("  (No response text generated)")
+    # You can also inspect interactions if needed
+    # print(f"  Interactions Log: {result.conversation_detail.interactions}")
 
 # Example of resetting the engine
 # new_metadata = { ... }
 # engine.reset(command_metadata=new_metadata)
 # engine.train()
-# result, hint = engine.run("new query")
+# result = engine.run("new query")
 
 ```
 
@@ -108,19 +134,19 @@ Key class: `talkengine.TalkEngine`
 
 - `__init__(command_metadata, conversation_history=None, nlu_overrides=None)`: Initializes the engine.
 - `train()`: Placeholder for potential future training/configuration steps.
-- `run(query)`: Processes a query, returns `(nlu_result_dict, hint_str)`.
+- `run(query, excluded_intents=None)`: Processes a query, returns `NLUResult` object.
 - `reset(command_metadata, conversation_history=None, nlu_overrides=None)`: Re-initializes the engine.
 
-NLU Result Dictionary Keys:
-- `intent` (str): Identified command key (or 'unknown').
-- `parameters` (dict): Extracted parameters.
-- `confidence` (float): Confidence score for the intent classification.
-- `raw_response` (Any): Internal data structure from text generation.
-- `response_text` (str): Basic textual summary of the NLU result.
+`NLUResult` Object Attributes:
+- `command` (Optional[str]): Identified command key (or `None` during interaction, `'unknown'` if not found).
+- `parameters` (Optional[Dict]): Extracted parameters.
+- `confidence` (Optional[float]): Confidence score for the intent classification.
+- `code_execution_result` (Optional[Dict]): Dictionary result from executed code, if any.
+- `conversation_detail` (ConversationDetail): Contains interaction log and final response text.
 
-Interaction Prompt Dictionary Keys (when hint indicates interaction):
-- `interaction_prompt` (str): The prompt message to show the user.
-- `interaction_mode` (InteractionState): The specific mode the engine is in.
+`ConversationDetail` Object Attributes:
+- `interactions` (List[Tuple[str, str, Optional[str]]]): Log of (stage, prompt, user_response) tuples during interactions.
+- `response_text` (Optional[str]): Final user-facing response text, or the interaction prompt if interaction is ongoing.
 
 ## 🛠️ Development
 
