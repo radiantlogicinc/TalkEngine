@@ -60,3 +60,8 @@ per-file-ignores = { "tests/*" = ["RUF006"] }
 # Skip assertion checks (B101) for test files
 skips = ["B101"]
 exclude_dirs = [".git", "__pycache__", ".venv", ".pytest_cache"]
+
+# Pytest configuration
+[tool.pytest.ini_options]
+
+asyncio_default_fixture_loop_scope = "function"
