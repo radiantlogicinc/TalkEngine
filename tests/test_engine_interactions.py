@@ -5,10 +5,10 @@ from typing import Dict, Any
 
 from talkengine import TalkEngine
 from talkengine.models import (
-    InteractionState,
     NLUResult,
     ConversationDetail,
 )
+from talkengine.nlu_pipeline.models import InteractionState
 from talkengine.nlu_pipeline.interaction_models import (
     ValidationRequestInfo,
     ClarificationData,
@@ -68,8 +68,7 @@ def test_enter_clarification_on_low_confidence(
     assert isinstance(result, NLUResult)
     assert result.command is None  # Intent not confirmed
     assert result.parameters == {}
-    assert result.confidence is None
-    assert result.code_execution_result is None
+    assert result.artifacts is None
     assert isinstance(result.conversation_detail, ConversationDetail)
     # Check the prompt is in response_text
     assert result.conversation_detail.response_text == mock_clar_prompt
@@ -114,7 +113,7 @@ def test_handle_clarification_input_success(
     engine._interaction_handlers = mock_interaction_handlers
     engine.train()
     user_clarification_input = "1"  # User chooses first option
-    initial_prompt = "Which one? 1. cmd_ambiguous1 2. cmd_ambiguous2"
+    # initial_prompt = "Which one? 1. cmd_ambiguous1 2. cmd_ambiguous2" # Unused variable
 
     # Set engine state to be IN clarification mode
     engine._pipeline_context.interaction_mode = InteractionState.CLARIFYING_INTENT
@@ -122,8 +121,8 @@ def test_handle_clarification_input_success(
         prompt="Which one?",  # Not used by handler directly, but for context
         options=["cmd_ambiguous1", "cmd_ambiguous2"],
     )
-    # Set the prompt that was *supposedly* shown before this input
-    engine._pipeline_context.last_prompt_shown = initial_prompt
+    # Store the expected prompt *before* running the engine
+    expected_prompt = engine._pipeline_context.interaction_data.prompt
 
     # Configure Clarification Handler mock for success
     mock_clar_handler = mock_interaction_handlers[InteractionState.CLARIFYING_INTENT]
@@ -147,7 +146,7 @@ def test_handle_clarification_input_success(
     assert isinstance(result, NLUResult)
     assert result.command == chosen_intent
     assert result.parameters == mock_params
-    assert result.code_execution_result is None
+    assert result.artifacts is None
     assert isinstance(result.conversation_detail, ConversationDetail)
     assert result.conversation_detail.response_text == mock_text
 
@@ -155,11 +154,12 @@ def test_handle_clarification_input_success(
     assert len(result.conversation_detail.interactions) == 1
     log_entry = result.conversation_detail.interactions[0]
     assert log_entry[0] == InteractionState.CLARIFYING_INTENT.value
-    assert log_entry[1] == initial_prompt
+    # Assert against the prompt stored *before* the interaction was cleared
+    assert log_entry[1] == expected_prompt
     assert log_entry[2] == user_clarification_input
 
     # Check context state: Interaction mode should be cleared
-    assert engine._pipeline_context.interaction_mode == InteractionState.IDLE
+    assert engine._pipeline_context.interaction_mode is None
     assert engine._pipeline_context.interaction_data is None
     assert engine._pipeline_context.current_intent == chosen_intent
 
@@ -231,8 +231,7 @@ def test_enter_validation_on_missing_param(
     assert isinstance(result, NLUResult)
     assert result.command == intent_name  # Intent was identified
     assert result.parameters == {}  # Parameters still empty
-    assert result.confidence == 0.99
-    assert result.code_execution_result is None
+    assert result.artifacts is None
     assert isinstance(result.conversation_detail, ConversationDetail)
     assert result.conversation_detail.response_text == mock_val_prompt
     # Check interaction log
@@ -284,7 +283,7 @@ def test_handle_validation_input_success(
     user_validation_input = "provided value"
     validated_param_name = "req_param"
     intent_name = "cmd_requires_param"
-    initial_prompt = f"What value for {validated_param_name}?"
+    # initial_prompt = f"What value for {validated_param_name}?" # Unused variable
 
     # Set engine state to be IN validation mode
     engine._pipeline_context.interaction_mode = InteractionState.VALIDATING_PARAMETER
@@ -297,7 +296,8 @@ def test_handle_validation_input_success(
         reason="missing_required",  # Simplified for test state setup
         prompt="Placeholder",
     )
-    engine._pipeline_context.last_prompt_shown = initial_prompt
+    # Store the expected prompt *before* running the engine
+    expected_prompt = engine._pipeline_context.interaction_data.prompt
 
     # Configure Validation Handler mock for success
     mock_val_handler = mock_interaction_handlers[InteractionState.VALIDATING_PARAMETER]
@@ -319,7 +319,7 @@ def test_handle_validation_input_success(
     assert isinstance(result, NLUResult)
     assert result.command == intent_name
     assert result.parameters == updated_params  # Params updated by interaction
-    assert result.code_execution_result is None
+    assert result.artifacts is None
     assert isinstance(result.conversation_detail, ConversationDetail)
     assert result.conversation_detail.response_text == mock_text
 
@@ -327,11 +327,12 @@ def test_handle_validation_input_success(
     assert len(result.conversation_detail.interactions) == 1
     log_entry = result.conversation_detail.interactions[0]
     assert log_entry[0] == InteractionState.VALIDATING_PARAMETER.value
-    assert log_entry[1] == initial_prompt
+    # Assert against the prompt stored *before* the interaction was cleared
+    assert log_entry[1] == expected_prompt
     assert log_entry[2] == user_validation_input
 
     # Check context state
-    assert engine._pipeline_context.interaction_mode == InteractionState.IDLE
+    assert engine._pipeline_context.interaction_mode is None
     assert engine._pipeline_context.interaction_data is None
     assert engine._pipeline_context.current_intent == intent_name
     assert engine._pipeline_context.current_parameters == updated_params

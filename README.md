@@ -21,7 +21,7 @@ talkengine provides a straightforward way to process natural language queries ag
 
 - **Simple Intent Classification**: Maps user input to predefined command keys based on metadata.
 - **Basic Parameter Extraction**: Identifies potential parameters (default implementation is basic).
-- **Configurable NLU**: Allows providing custom functions (overrides) for intent detection, parameter extraction, and text generation.
+- **Configurable NLU**: Allows providing custom functions (overrides) for intent detection, parameter extraction, and response generation.
 - **Stateful Reset**: Engine can be reset and re-initialized with new command metadata.
 
 ## 🚀 Installation
@@ -42,26 +42,17 @@ from typing import Optional # For executable example
 logging.basicConfig(level=logging.INFO)
 
 # 1. Define your command metadata
-def add_numbers(params: dict) -> Optional[dict]:
-    """Example function to be executed."""
+def add_numbers(num1: int, num2: int) -> int:
+    """Add two numbers together."""
     try:
-        num1 = int(params.get("num1", 0))
-        num2 = int(params.get("num2", 0))
-        result = num1 + num2
-        return {"sum": result} # Return result in a dictionary
+        return num1 + num2
     except ValueError:
         return {"error": "Invalid number input"}
 
 command_metadata = {
-    "calculator.add": {
-        "description": "Adds two numbers together.",
+    "add_numbers": {
+        "description": "Add two numbers together.",
         "parameters": {"num1": "int", "num2": "int"},
-        "executable_code": add_numbers # Add reference to executable function
-    },
-    "weather.get_forecast": {
-        "description": "Gets the weather forecast for a location.",
-        "parameters": {"location": "str", "date": "str"}
-        # No executable_code for this one
     },
 }
 
@@ -72,7 +63,11 @@ conversation_history = [
 ]
 
 # 3. (Optional) Define NLU overrides
-nlu_overrides = {}
+nlu_overrides = {
+    "add_numbers": {
+        "executable_code": add_numbers # Add reference to executable function
+    },
+}
 
 # 4. Initialize the engine
 engine = TalkEngine(
@@ -101,22 +96,16 @@ while True:
         print(f"  Interaction Required ({engine._pipeline_context.interaction_mode.name}):")
         # The prompt is now in the response_text field of conversation_detail
         print(f"  Prompt: {result.conversation_detail.response_text}")
-        # Your application logic would handle this interaction
-        # (e.g., get user input and call engine.run() again)
         continue # Skip printing normal results for this example
 
     # --- Display final NLU results --- 
     print(f"  Command: {result.command or 'N/A'}")
-    print(f"  Confidence: {result.confidence:.2f}" if result.confidence is not None else "  Confidence: N/A")
     print(f"  Parameters: {result.parameters or {}}")
     # Check if code was executed
-    if result.code_execution_result:
-        print(f"  Code Execution Result: {result.code_execution_result}")
+    if result.artifacts:
+        print(f"  Artifacts: {result.artifacts}")
     # Check the generated response text (if any)
-    if result.conversation_detail.response_text:
-        print(f"  Response Text: {result.conversation_detail.response_text}")
-    else:
-        print("  (No response text generated)")
+    print(f"  Response Text: {result.conversation_detail.response_text}")
     # You can also inspect interactions if needed
     # print(f"  Interactions Log: {result.conversation_detail.interactions}")
 
@@ -140,8 +129,7 @@ Key class: `talkengine.TalkEngine`
 `NLUResult` Object Attributes:
 - `command` (Optional[str]): Identified command key (or `None` during interaction, `'unknown'` if not found).
 - `parameters` (Optional[Dict]): Extracted parameters.
-- `confidence` (Optional[float]): Confidence score for the intent classification.
-- `code_execution_result` (Optional[Dict]): Dictionary result from executed code, if any.
+- `artifacts` (Optional[Dict]): Dictionary result from executed code, if any.
 - `conversation_detail` (ConversationDetail): Contains interaction log and final response text.
 
 `ConversationDetail` Object Attributes:

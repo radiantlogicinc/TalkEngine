@@ -25,7 +25,7 @@ This document is intended for developers using the `talkengine` library.
     - Clarify ambiguous user intent.
     - Validate or request missing parameters.
     - Solicit feedback on previous responses.
-- **Text Generation**: Generates a basic textual summary and a raw data representation of the NLU results.
+- **Text Generation**: Generates a basic textual summary and optionally returns artifacts (a dictionary of result data from the optional code execution step).
 - **Hint Generation**: Provides a hint indicating if the query is treated as a new conversation turn (currently always `'new_conversation'`).
 - **Stateful Reset**: The `reset()` method allows re-initializing the `TalkEngine` instance with new configuration.
 
@@ -48,25 +48,24 @@ FR-1.6: `TalkEngine` shall provide a placeholder `train()` method.
 
 ### 3.2 NLU Processing (`run` method)
 FR-2.1: `TalkEngine` shall provide a `run(query: str)` method.
-FR-2.2: The `run()` method shall process the input query using the configured NLU components (intent detector, parameter extractor) and internal logic for response generation (optional code execution, optional text generation).
+FR-2.2: The `run()` method shall process the input query using the configured NLU components (intent detector, parameter extractor) and internal logic for response generation (optional code execution, mandatory text generation).
 FR-2.3: The `run()` method shall return a tuple containing:
     a) The original user query string.
     b) A list of `NLUResult` objects. Each object represents one attempt to process the query through the NLU pipeline. Initially, this list will contain one result. Subsequent results may be added if the calling application triggers a re-run based on feedback (See FR-2.9).
 FR-2.4: Each `NLUResult` object shall be a Pydantic BaseModel containing:
     a) `command` (str): The identified command key from the metadata, or `'unknown'`.
     b) `parameters` (Optional[dict]): A dictionary of extracted parameter names and values.
-    c) `confidence` (Optional[float]): The confidence score of the intent classification.
-    d) `code_execution_result` (Optional[dict]): The result returned from executing code associated with the identified command, if any.
+    d) `artifacts` (Optional[dict]): The result returned from executing code associated with the identified command, if any.
     e) `conversation_detail` (ConversationDetail): An object containing details about the interaction flow for this attempt (See FR-2.5).
 FR-2.5: The `ConversationDetail` object within `NLUResult` shall be a Pydantic BaseModel containing:
     a) `interactions` (list): A list of tuples or objects, each documenting a step in any interactive sub-dialogue (e.g., clarification, validation). Each entry should record the interaction stage/type, the prompt presented to the user, and the user's feedback/response during that interaction step.
     b) `response_text` (Optional[str]): The final user-facing text generated for this attempt, if any.
-FR-2.6: Intent classification shall identify a command key defined in the metadata (or `'unknown'`) and its confidence, contributing to the `command` and `confidence` fields of the `NLUResult`.
+FR-2.6: Intent classification shall identify a command key defined in the metadata (or `'unknown'`), contributing to the `command` field of the `NLUResult`.
 FR-2.7: Parameter extraction shall identify parameter names and values, contributing to the `parameters` field of the `NLUResult`.
 FR-2.8: The response generation phase shall consist of two optional steps orchestrated by the `TalkEngine`:
-    a) Code Execution: If executable code (e.g., a function reference) is associated with the identified command in the `command_metadata`, the `TalkEngine` shall execute it with the extracted `parameters`. The result populates the `code_execution_result` field of the `NLUResult`.
-    b) Text Generation: If a text generator component is configured (via overrides or default), the `TalkEngine` shall invoke it to generate a user-facing response based on the `command`, `parameters`, and optional `code_execution_result`. The result populates the `response_text` field of the `ConversationDetail`.
-    c) Both Code Execution and Text Generation are optional. A command may be configured with neither, one, or both.
+    a) Code Execution: If executable code (e.g., a function reference) is associated with the identified command in the `command_metadata`, the `TalkEngine` shall execute it with the extracted `parameters`. The result can help populate the `artifacts` field of the `NLUResult`.
+    b) Text Generation: If a text generator component is configured (via overrides or default), the `TalkEngine` shall invoke it to generate a user-facing response based on the `command`, `parameters`, and optional `artifacts`. The result populates the `response_text` field of the `ConversationDetail`.
+    c) Code Execution is optional but text generation is not. A command may be configured with just text generation or both code execution and text generation.
 FR-2.9: The `run` method shall accept an optional argument to exclude specific command intents from the classification step. This allows a calling application to re-invoke `run` if initial results are unsatisfactory (e.g., user feedback indicates the wrong command was inferred), preventing the same incorrect command from being chosen again in the subsequent attempt. The new `NLUResult` from the re-run is appended to the list returned by `run`.
 
 ### 3.3 Interaction Handling
@@ -144,7 +143,6 @@ while True:
 
     print(f"  Hint: {hint}") # Currently always "new_conversation"
     print(f"  Intent: {nlu_result.get('intent', 'N/A')}")
-    print(f"  Confidence: {nlu_result.get('confidence', 0.0):.2f}")
     print(f"  Parameters: {nlu_result.get('parameters', {})}")
     # print(f"  Raw Response: {nlu_result.get('raw_response')}") # Internal data structure
     print(f"  Response Text: {nlu_result.get('response_text')}") # Basic text summary

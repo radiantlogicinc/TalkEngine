@@ -37,7 +37,7 @@ class FeedbackData(BaseInteractionData):
     """Data needed for response feedback."""
 
     response_text: str
-    execution_results: Optional[Dict[str, Any]] = None
+    artifacts: Optional[Dict[str, Any]] = None
     prompt: str = "Was this response helpful? (yes/no/details)"  # Default prompt
 
 

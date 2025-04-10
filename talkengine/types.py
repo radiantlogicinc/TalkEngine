@@ -2,7 +2,7 @@
 Simplified type definitions for TalkEngine.
 """
 
-from typing import Any, Callable, TypeAlias
+from typing import Any, Callable, TypeAlias, Tuple, Optional
 
 from pydantic import BaseModel
 
@@ -26,6 +26,10 @@ NLUOverridesInput: TypeAlias = dict[str, dict[str, Callable[..., Any]]]
 # Type alias for the result dictionary returned by TalkEngine.run()
 NLURunResult: TypeAlias = dict[str, Any]
 
+# Type alias for interaction log entries used in ConversationDetail
+# Structure: (interaction_stage_type: str, prompt_shown: str, user_response: Optional[str])
+InteractionLogEntry: TypeAlias = Tuple[str, str, Optional[str]]
+
 __all__ = [
     "ParamValue",
     "ExtendedParamValue",
@@ -33,4 +37,5 @@ __all__ = [
     "ConversationHistoryInput",
     "NLUOverridesInput",
     "NLURunResult",
+    "InteractionLogEntry",
 ]

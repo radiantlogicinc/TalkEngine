@@ -13,7 +13,7 @@ from talkengine.nlu_pipeline.nlu_engine_interfaces import (
 )
 
 # Import context and interaction models needed for fixtures/tests
-from talkengine.models import NLUPipelineContext, InteractionState
+from talkengine.nlu_pipeline.models import NLUPipelineContext, InteractionState
 from talkengine.nlu_pipeline.interaction_handlers import (
     ClarificationHandler,
     ValidationHandler,

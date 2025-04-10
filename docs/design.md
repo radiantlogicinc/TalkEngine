@@ -16,7 +16,7 @@ This design document covers the `TalkEngine` class, its core components (NLU int
 ## 2. Architectural Overview
 
 ### 2.1 High-Level Architecture
-The architecture centers around the `TalkEngine` class (`talkengine/engine.py`). This class encapsulates the NLU pipeline logic, holds instances of NLU components (intent detection, parameter extraction, text generation), and directly handles an optional code execution step based on command metadata.
+The architecture centers around the `TalkEngine` class (`talkengine/engine.py`). This class encapsulates the NLU pipeline logic, holds instances of NLU components (intent detection, parameter extraction, response generation), and directly handles an optional code execution step based on command metadata.
 
 ```mermaid
 graph LR
@@ -64,7 +64,7 @@ graph LR
 ```
 
 ### 2.2 Key Design Patterns
-- **Strategy Pattern**: NLU logic (intent detection, parameter extraction, text generation) is defined by interfaces, allowing different implementations (strategies) to be used (defaults or developer-provided overrides).
+- **Strategy Pattern**: NLU logic (intent detection, parameter extraction, response generation) is defined by interfaces, allowing different implementations (strategies) to be used (defaults or developer-provided overrides).
 - **Dependency Injection**: `TalkEngine` receives its core configuration (metadata, history, overrides) via its constructor.
 - **Facade Pattern**: `TalkEngine` acts as a simplified interface (facade) over the underlying NLU pipeline steps.
 - **Finite State Machine (FSM)**: The interaction handling mechanism (`InteractionState`, `InteractionHandler`) implements an FSM to manage sub-dialogues for clarification, validation, etc. The steps within these FSMs are tracked.
@@ -80,18 +80,19 @@ graph LR
     - `train`: Placeholder method.
     - `run(user_query: str, excluded_intents: Optional[list[str]] = None) -> NLUResult`: Takes a user query and optional list of intents to exclude. If in an interaction mode, delegates input to the appropriate `InteractionHandler`. Otherwise, executes the main NLU pipeline:
         1. Intent classification using `_intent_detector` (respecting `excluded_intents`).
-        2. Parameter extraction using `_param_extractor`.
-        3. (Potentially enters/handles interaction mode).
-        4. Looks up `executable_code` in `_command_metadata` for the identified intent. If found, executes it with the extracted parameters, storing the result.
-        5. Optional text generation using `_text_generator`.
-        6. Updates `_pipeline_context`.
-        7. Constructs and returns an `NLUResult` object.
+        2. (Potentially enters/handles interaction mode).
+        3. Parameter extraction using `_param_extractor`.
+        4. (Potentially enters/handles interaction mode).
+        5. Looks up `executable_code` in `_command_metadata` for the identified intent. If found, executes it with the extracted parameters, returning the result.
+        8. Text generation using `_text_generator`.
+        9. Updates `_pipeline_context`.
+        10. Constructs and returns an `NLUResult` object.
     - `reset`: Calls `__init__` to re-initialize with new configuration.
 
 ### 3.2 NLU Interfaces (`talkengine/nlu_pipeline/nlu_engine_interfaces.py`)
 - **`IntentDetectionInterface`**: Defines `classify_intent(...)`.
 - **`ParameterExtractionInterface`**: Defines `identify_parameters(...)`.
-- **`TextGenerationInterface`**: Defines `generate_text(intent, parameters, code_execution_result, pipeline_context)` method signature, returning the user-facing response text (str). `code_execution_result` will be `None` if no code was executed.
+- **`TextGenerationInterface`**: Defines `generate_text(intent, parameters, artifacts, pipeline_context)` method signature, returning the user-facing response text (str). `artifacts` will be `None` if no code was executed.
 
 ### 3.3 Interaction Handling Components (`talkengine/nlu_pipeline/interaction_*.py`)
 - **`InteractionState` (Enum - `models.py`)**: Defines the possible states for interaction modes (e.g., `CLARIFYING_INTENT`, `VALIDATING_PARAMETER`).
@@ -103,7 +104,7 @@ graph LR
 ### 3.4 Default NLU Implementations (`talkengine/nlu_pipeline/default_*.py`)
 - **`DefaultIntentDetection`**: Implements `IntentDetectionInterface`.
 - **`DefaultParameterExtraction`**: Implements `ParameterExtractionInterface`.
-- **`DefaultResponseGeneration`**: Implements `TextGenerationInterface`. `generate_text` returns a simple string representation including intent, parameters, and optionally the `code_execution_result` (passed in by `TalkEngine`).
+- **`DefaultResponseGeneration`**: Implements `TextGenerationInterface`. `generate_text` returns a simple string representation including intent, parameters, and optionally the `artifacts` (passed in by `TalkEngine`).
 
 ## 4. Data Models
 
@@ -121,8 +122,7 @@ graph LR
     - `NLUResult`: Returned by `TalkEngine.run()`. Contains:
         - `command: str`
         - `parameters: Optional[dict]`
-        - `confidence: Optional[float]`
-        - `code_execution_result: Optional[dict]`
+        - `artifacts: Optional[dict]`
         - `conversation_detail: ConversationDetail`
 - **Conversation Detail (Output - Pydantic BaseModel in `models.py`)**:
     - `ConversationDetail`: Nested within `NLUResult`. Contains:
@@ -147,7 +147,7 @@ graph LR
     b. Call `handler.handle_input(user_query, self._pipeline_context)`. This method internally records the interaction step (e.g., appends `('clarification', prompt, user_query)` to `_pipeline_context.recorded_interactions`).
     c. Process `InteractionResult`: Update context, potentially exit mode. If exiting and proceeding, continue to step 4. Otherwise, construct and return `NLUResult` using current context state (command might be `None` or partially resolved, `response_text` might be the interaction prompt).
 4. **If NOT in an Interaction Mode:**
-    a. Call `self._intent_detector.classify_intent(user_query, self._pipeline_context, excluded_intents)`. Update context (`current_intent`, `current_confidence`).
+    a. Call `self._intent_detector.classify_intent(user_query, self._pipeline_context, excluded_intents)`. Update context (`current_intent`).
     b. **Decision Point (Intent):** If clarification needed, set `interaction_mode`, create data, get `InteractionHandler`, call `get_initial_prompt`, record interaction step (`('clarification_start', prompt, None)`), return `NLUResult` with current state and interaction prompt as `response_text`.
     c. Call `self._param_extractor.identify_parameters(user_query, context.current_intent, self._pipeline_context)`. Update context (`current_parameters`).
     d. **Decision Point (Params):** If validation needed, handle interaction...
@@ -157,7 +157,7 @@ graph LR
     f. Check if a text generator (`self._text_generator`) is configured. If yes, call `self._text_generator.generate_text(...)` with `code_exec_result` (which might be `None`). Store result in `text_response`.
       If no text generator is configured, set `text_response = None`.
     g. Construct `ConversationDetail` using `self._pipeline_context.recorded_interactions` and `text_response` (which might be `None`).
-    h. Construct final `NLUResult` using `context.current_intent`, `context.current_parameters`, `context.current_confidence`, `code_exec_result` (which might be `None`), and the constructed `ConversationDetail`.
+    h. Construct final `NLUResult` using `context.current_intent`, `context.current_parameters`, `code_exec_result` (which might be `None`), and the constructed `ConversationDetail`.
     i. Return the `NLUResult`.
 
 ### 5.3 Reset (`engine.reset(...)`)

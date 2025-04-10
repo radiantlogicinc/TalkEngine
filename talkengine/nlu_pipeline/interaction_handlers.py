@@ -3,16 +3,16 @@
 # New file
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any, Dict, Optional, Type
+from typing import Any, Dict, Optional
 
 # Import the specific data models
 from .interaction_models import (
-    BaseInteractionData,
     ClarificationData,
     FeedbackData,
     ValidationData,
 )
-from ..models import NLUPipelineContext, InteractionLogEntry
+from .models import NLUPipelineContext
+from ..utils.logging import logger
 
 
 @dataclass
@@ -30,169 +30,150 @@ class InteractionResult:
     error_message: Optional[str] = None  # For reporting input processing errors
 
 
-class InteractionHandler(ABC):
-    """Abstract Base Class for interaction mode handlers."""
-
-    # Optional: Define expected data type for validation/casting
-    expected_data_type: Optional[Type[BaseInteractionData]] = None
-
-    def _get_typed_data(
-        self, context: NLUPipelineContext
-    ) -> Optional[BaseInteractionData]:
-        """Safely retrieves and potentially validates interaction data."""
-        if not context.interaction_data:
-            # Log error: Handler called with no interaction data
-            return None
-        if self.expected_data_type and not isinstance(
-            context.interaction_data, self.expected_data_type
-        ):  # pylint: disable=isinstance-second-argument-not-valid-type
-            # Log error: Handler called with wrong data type
-            return None
-        return context.interaction_data
+class BaseInteractionHandler(ABC):
+    """Abstract base class for interaction handlers."""
 
     @abstractmethod
     def get_initial_prompt(self, context: NLUPipelineContext) -> str:
-        """Generates the first prompt when entering this mode. Assumes interaction_data is set."""
+        """Generate the initial prompt for this interaction mode."""
 
     @abstractmethod
     def handle_input(
-        self, user_message: str, context: NLUPipelineContext
+        self, user_input: str, context: NLUPipelineContext
     ) -> InteractionResult:
-        """Processes user input while in this mode.
-
-        Implementations should log the interaction (last prompt + user input)
-        to context.recorded_interactions.
-        """
+        """Process user input during this interaction mode."""
 
 
-# --- Concrete Handler Implementations (Placeholders) ---
-
-
-class ClarificationHandler(InteractionHandler):
-    """Handles intent clarification."""
-
-    expected_data_type = ClarificationData
+class ClarificationHandler(BaseInteractionHandler):
+    """Handles the intent clarification interaction."""
 
     def get_initial_prompt(self, context: NLUPipelineContext) -> str:
-        data = self._get_typed_data(context)
-        if not data or not isinstance(data, ClarificationData):
-            return "Sorry, there was an error retrieving clarification options."  # Fallback
+        """Generates the clarification prompt with options."""
+        if not isinstance(context.interaction_data, ClarificationData):
+            logger.error("ClarificationHandler: Invalid interaction data type.")
+            return "Sorry, I got confused. Could you please rephrase?"
 
+        data: ClarificationData = context.interaction_data
         options_text = "\n".join(
-            f"{i + 1}. {opt}" for i, opt in enumerate(data.options)
+            f"{i+1}. {option}" for i, option in enumerate(data.options)
         )
-        return f"{data.prompt}\n{options_text}"
+        prompt = f"{data.prompt}\n{options_text}"
+        logger.debug(f"Generated clarification prompt: {prompt}")
+
+        return prompt
 
     def handle_input(
-        self, user_message: str, context: NLUPipelineContext
+        self, user_input: str, context: NLUPipelineContext
     ) -> InteractionResult:
-        # Log the interaction before processing
-        if context.last_prompt_shown:
-            log_entry: InteractionLogEntry = (
-                context.interaction_mode.value,
-                context.last_prompt_shown,
-                user_message,
-            )
-            context.recorded_interactions.append(log_entry)
+        """Processes user's choice during clarification."""
+        logger.debug(f"ClarificationHandler handling input: '{user_input}'")
 
-        data = self._get_typed_data(context)
-        if not data or not isinstance(data, ClarificationData):
+        if not isinstance(context.interaction_data, ClarificationData):
+            logger.error(
+                "ClarificationHandler: Invalid interaction data type on input."
+            )
+            # Exit interaction, proceed with default/unknown state?
             return InteractionResult(
-                response="Error processing clarification.", exit_mode=True
+                exit_mode=True,
+                proceed_immediately=False,
+                response="Error: Invalid interaction data for clarification.",
             )
 
-        # Placeholder Logic: Try to map input (e.g., number) to an option
+        data: ClarificationData = context.interaction_data
+        chosen_intent: Optional[str] = None
+
+        # Try to map input to an option index
         try:
-            choice_index = int(user_message.strip()) - 1
+            choice_index = int(user_input.strip()) - 1
             if 0 <= choice_index < len(data.options):
                 chosen_intent = data.options[choice_index]
-                # Success! Update context and exit mode
-                return InteractionResult(
-                    response=f"Okay, proceeding with intent: {chosen_intent}",
-                    exit_mode=True,
-                    proceed_immediately=True,  # Indicate pipeline should continue
-                    update_context={"current_intent": chosen_intent},
-                )
-            # else: # Removed else
-            # Invalid number
-            return InteractionResult(
-                response=f"Please enter a number between 1 and {len(data.options)}.\n{self.get_initial_prompt(context)}"
-            )
+                logger.info(f"User clarified intent: {chosen_intent}")
+            else:
+                logger.warning("User input is not a valid option number.")
         except ValueError:
-            # Input wasn't a number, could add fuzzy matching later
+            # Maybe try fuzzy matching the text input against options?
+            logger.warning("User input is not a number. Clarification failed.")
+
+        if chosen_intent:
+            # Update context directly (this part is okay)
+            context.current_intent = chosen_intent
+            context.confidence_score = 1.0  # Assume high confidence after clarification
+            # Exit clarification, proceed to parameter extraction
             return InteractionResult(
-                response=f"Please enter the number corresponding to your choice.\n{self.get_initial_prompt(context)}"
+                exit_mode=True,
+                proceed_immediately=True,
+                response=f"Okay, proceeding with {chosen_intent}.",
+            )
+        else:
+            # Clarification failed, maybe reprompt or exit?
+            # For now, exit and let the engine handle the 'unknown' intent state
+            return InteractionResult(
+                exit_mode=True,
+                proceed_immediately=False,  # Don't proceed if clarification failed
+                response="Sorry, I didn't understand that choice. Please try again.",
             )
 
 
-class ValidationHandler(InteractionHandler):
-    """Handles parameter validation."""
-
-    expected_data_type = ValidationData
+class ValidationHandler(BaseInteractionHandler):
+    """Handles the parameter validation interaction."""
 
     def get_initial_prompt(self, context: NLUPipelineContext) -> str:
-        data = self._get_typed_data(context)
-        if not data or not isinstance(data, ValidationData):
-            return "Sorry, there was an error requesting parameter information."  # Fallback
+        """Generates the validation prompt."""
+        if not isinstance(context.interaction_data, ValidationData):
+            logger.error("ValidationHandler: Invalid interaction data type.")
+            return "Sorry, I need more information. Could you please rephrase?"
 
-        # Use the prompt template and parameter name
-        prompt = data.prompt.format(parameter_name=data.parameter_name)
-        # Construct a message based on the reason
-        reason_msg = f"Missing required information for {data.parameter_name}."
-        if data.reason == "invalid_format":
-            reason_msg = f"Invalid format provided for {data.parameter_name}."
-        # Add more reason handling if needed
+        data: ValidationData = context.interaction_data
+        prompt = (
+            data.prompt
+            or f"What is the value for {data.parameter_name}? ({data.reason})"
+        )
+        logger.debug(f"Generated validation prompt: {prompt}")
 
-        return f"{reason_msg}\n{prompt}"
+        return prompt
 
     def handle_input(
-        self, user_message: str, context: NLUPipelineContext
+        self, user_input: str, context: NLUPipelineContext
     ) -> InteractionResult:
-        # Log the interaction before processing
-        if context.last_prompt_shown:
-            log_entry: InteractionLogEntry = (
-                context.interaction_mode.value,
-                context.last_prompt_shown,
-                user_message,
-            )
-            context.recorded_interactions.append(log_entry)
+        """Processes user's input for a missing/invalid parameter."""
+        logger.debug(f"ValidationHandler handling input: '{user_input}'")
 
-        data = self._get_typed_data(context)
-        if not data or not isinstance(data, ValidationData):
+        if not isinstance(context.interaction_data, ValidationData):
+            logger.error("ValidationHandler: Invalid interaction data type on input.")
             return InteractionResult(
-                response="Error processing validation.", exit_mode=True
-            )
-
-        # Placeholder Logic: Assume any non-empty input is the validated value
-        # In reality, this would call a specific validation function based on the parameter type
-        provided_value = user_message.strip()
-        if provided_value:
-            # Update the specific parameter in the context's parameter dict
-            updated_params = context.current_parameters.copy()
-            updated_params[data.parameter_name] = (
-                provided_value  # Needs proper type conversion later!
-            )
-            return InteractionResult(
-                response=f"Okay, I've updated {data.parameter_name}.",
                 exit_mode=True,
-                proceed_immediately=True,  # Continue pipeline (e.g., re-check parameters or execute)
-                update_context={"current_parameters": updated_params},
+                proceed_immediately=False,
+                response="Error: Invalid interaction data for validation.",
             )
-        # else: # Removed else
-        # Empty input
+
+        data: ValidationData = context.interaction_data
+        parameter_name = data.parameter_name
+        validated_value = user_input  # Assume the input is the value for now
+        # TODO: Add type validation/conversion based on metadata?
+
+        logger.info(f"User provided value for {parameter_name}: '{validated_value}'")
+
+        # Update the specific parameter in the context
+        # Ensure current_parameters is initialized if not already
+        if context.current_parameters is None:
+            context.current_parameters = {}
+        context.current_parameters[parameter_name] = validated_value
+
+        # Exit validation mode, proceed to code execution (or next step)
         return InteractionResult(
-            response="Please provide a value."
-        )  # Re-prompt implicitly via manager
+            exit_mode=True,
+            proceed_immediately=True,
+            response=f"Okay, using '{validated_value}' for {parameter_name}.",
+        )
 
 
-class FeedbackHandler(InteractionHandler):
+class FeedbackHandler(BaseInteractionHandler):
     """Handles user feedback on the response."""
 
-    expected_data_type = FeedbackData
-
     def get_initial_prompt(self, context: NLUPipelineContext) -> str:
-        data = self._get_typed_data(context)
-        if not data or not isinstance(data, FeedbackData):
+        data = context.interaction_data
+        if not isinstance(data, FeedbackData):
+            logger.error("FeedbackHandler: Invalid interaction data type.")
             return "Could I get your feedback on the previous response?"  # Fallback
 
         # Maybe truncate long responses for the prompt
@@ -206,17 +187,19 @@ class FeedbackHandler(InteractionHandler):
     def handle_input(
         self, user_message: str, context: NLUPipelineContext
     ) -> InteractionResult:
-        # Log the interaction before processing
-        if context.last_prompt_shown:
-            log_entry: InteractionLogEntry = (
-                context.interaction_mode.value,
-                context.last_prompt_shown,
-                user_message,
-            )
-            context.recorded_interactions.append(log_entry)
+        # Remove logging access to non-existent attributes
+        # if context.last_prompt_shown:
+        #     log_entry: InteractionLogEntry = (
+        #         context.interaction_mode.value if context.interaction_mode else "feedback", # Guard access
+        #         context.last_prompt_shown,
+        #         user_message,
+        #     )
+        # context.recorded_interactions.append(log_entry) # Remove access
 
-        data = self._get_typed_data(context)
-        if not data or not isinstance(data, FeedbackData):
+        # Replace _get_typed_data with direct access and type check
+        data = context.interaction_data
+        if not isinstance(data, FeedbackData):
+            logger.error("FeedbackHandler: Invalid interaction data type on input.")
             return InteractionResult(
                 response="Error processing feedback.", exit_mode=True
             )

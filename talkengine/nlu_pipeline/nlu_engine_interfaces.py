@@ -6,8 +6,7 @@ Defines abstract interfaces for core NLU components.
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional, Tuple
 
-# Import necessary types - Corrected path
-from ..models import NLUPipelineContext
+from .models import NLUPipelineContext
 from .interaction_models import ValidationRequestInfo
 
 
@@ -89,7 +88,7 @@ class TextGenerationInterface(ABC):
         self,
         intent: str,
         parameters: Dict[str, Any],
-        code_execution_result: Optional[Dict[str, Any]],
+        artifacts: Optional[Dict[str, Any]],
         context: NLUPipelineContext,
     ) -> Optional[str]:
         """Generate a user-facing text response.
@@ -97,7 +96,7 @@ class TextGenerationInterface(ABC):
         Args:
             intent: The classified intent (command key).
             parameters: The extracted parameters.
-            code_execution_result: Result from executing code associated with the
+            artifacts: Result from executing code associated with the
                                      command, if any.
             context: The current NLU pipeline context.
 

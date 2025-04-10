@@ -2,7 +2,7 @@
 Defines the core TalkEngine class.
 """
 
-from typing import Any, Optional, Dict, List, Tuple, Union, Callable, Mapping
+from typing import Any, Optional, Dict, List, Union, Callable, Mapping
 
 # Assuming simplified types are defined or basic types used
 # from .types import CommandMetadataInput, ConversationHistoryInput, NLUOverridesInput, NLURunResult
@@ -14,20 +14,23 @@ from .nlu_pipeline.nlu_engine_interfaces import (
 
 # Import NLU models and interaction components - Corrected path
 from .models import (
-    NLUPipelineContext,
-    InteractionState,
     NLUResult,
     ConversationDetail,
     InteractionLogEntry,
 )
+from .nlu_pipeline.models import (
+    NLUPipelineContext,
+    InteractionState,
+)
 from .nlu_pipeline.interaction_handlers import (
-    InteractionHandler,
+    BaseInteractionHandler,
     ClarificationHandler,
     ValidationHandler,
     InteractionResult,
 )
 from .nlu_pipeline.default_intent_detection import DefaultIntentDetection
 from .nlu_pipeline.default_param_extraction import DefaultParameterExtraction
+from .nlu_pipeline.default_text_generation import DefaultTextGeneration
 
 # Corrected interaction model path
 from .nlu_pipeline.interaction_models import (
@@ -60,7 +63,7 @@ class TalkEngine:
     _is_trained: bool
     # Add pipeline context and interaction handlers
     _pipeline_context: NLUPipelineContext
-    _interaction_handlers: Mapping[InteractionState, InteractionHandler]
+    _interaction_handlers: Mapping[InteractionState, BaseInteractionHandler]
 
     def __init__(
         self,
@@ -114,7 +117,7 @@ class TalkEngine:
         # self._pipeline_context.command_metadata = self._command_metadata
         # self._pipeline_context.conversation_history = self._conversation_history
 
-        # Initialize NLU components (intent detection, parameter extraction, text generation)
+        # Initialize NLU components (intent detection, parameter extraction, response generation)
         # using defaults or overrides
         self._initialize_nlu_components()
 
@@ -167,15 +170,15 @@ class TalkEngine:
                 logger.debug("Using provided TextGeneration override.")
             else:  # Key provided but invalid type
                 logger.warning(
-                    "Invalid TextGeneration override provided (type mismatch). Setting to None."
+                    "Invalid TextGeneration override provided (type mismatch). Using default."
                 )
-                self._text_generator = None  # Treat invalid override as no generator
+                self._text_generator = DefaultTextGeneration()  # Use default
         else:
-            # Key NOT provided, explicitly set to None (no default fallback)
+            # Key NOT provided, use default implementation
             logger.debug(
-                "No TextGeneration override provided. Text generator disabled."
+                "No TextGeneration override provided. Using DefaultTextGeneration."
             )
-            self._text_generator = None
+            self._text_generator = DefaultTextGeneration()
 
         logger.debug("NLU components initialized.")
 
@@ -211,7 +214,7 @@ class TalkEngine:
         """Processes a single natural language query.
 
         Handles interaction modes (clarification, validation) and the main NLU pipeline
-        (intent, params, optional code execution, optional text generation).
+        (intent, params, optional code execution, text generation).
         Logs interactions and returns a structured NLUResult.
 
         Args:
@@ -224,32 +227,44 @@ class TalkEngine:
         logger.info(f"TalkEngine run() called with query: '{user_query}'")
         logger.debug(f"Initial context for run: {self._pipeline_context}")
 
-        proceed_immediately_from_interaction = False
+        # --- Local State for this Run ---
+        current_interactions: List[InteractionLogEntry] = []
+        # Initialize based on existing interaction state if applicable
+        initial_prompt_from_context: Optional[str] = None
+        if self._pipeline_context.interaction_mode is not None:
+            # Attempt to get prompt from existing interaction data
+            if hasattr(self._pipeline_context.interaction_data, "prompt"):
+                initial_prompt_from_context = getattr(
+                    self._pipeline_context.interaction_data, "prompt", None
+                )
+            else:
+                logger.warning(
+                    "Interaction mode set, but interaction_data has no 'prompt' attribute."
+                )
+
+        current_last_prompt_shown: Optional[str] = (
+            initial_prompt_from_context  # Use context prompt if available
+        )
+        # --- End Local State ---
+
         goto_step = "intent_classification"
 
         # --- FSM Logic (Handle if already in interaction) ---
-        if self._pipeline_context.interaction_mode != InteractionState.IDLE:
-            handler = self._interaction_handlers.get(
+        if self._pipeline_context.interaction_mode is not None:
+            if handler := self._interaction_handlers.get(
                 self._pipeline_context.interaction_mode
-            )
-            if not handler:
-                logger.error(
-                    f"No handler for mode {self._pipeline_context.interaction_mode}. Resetting."
-                )
-                self._pipeline_context.interaction_mode = InteractionState.IDLE
-                self._pipeline_context.interaction_data = None
-            else:
+            ):
                 logger.debug(
                     f"In interaction mode: {self._pipeline_context.interaction_mode}. Handling input."
                 )
-                # Log interaction before calling handler
-                if self._pipeline_context.last_prompt_shown:
+                # Log interaction before calling handler, using local prompt state
+                if current_last_prompt_shown:
                     log_entry: InteractionLogEntry = (
                         self._pipeline_context.interaction_mode.value,
-                        self._pipeline_context.last_prompt_shown,
+                        current_last_prompt_shown,  # Use local variable
                         user_query,
                     )
-                    self._pipeline_context.recorded_interactions.append(log_entry)
+                    current_interactions.append(log_entry)  # Use local variable
                 else:
                     logger.warning("Cannot log interaction: last_prompt_shown is None.")
 
@@ -268,59 +283,51 @@ class TalkEngine:
                                 f"Attempted to update non-existent context field: {key}"
                             )
 
-                self._pipeline_context.last_prompt_shown = interaction_result.response
+                current_last_prompt_shown = (
+                    interaction_result.response
+                )  # Use local variable
 
-                if interaction_result.exit_mode:
-                    exited_mode = self._pipeline_context.interaction_mode
-                    logger.debug(f"Exiting interaction mode: {exited_mode}")
-                    self._pipeline_context.interaction_mode = InteractionState.IDLE
-                    self._pipeline_context.interaction_data = None
+                if not interaction_result.exit_mode:
+                    # Pass local state to helper
+                    return self._extracted_from_run_73(
+                        "Continuing interaction mode, returning prompt.",
+                        interaction_result,
+                        current_interactions,  # Pass local list
+                    )
+                exited_mode = self._pipeline_context.interaction_mode
+                logger.debug(f"Exiting interaction mode: {exited_mode}")
+                self._pipeline_context.interaction_mode = None
+                self._pipeline_context.interaction_data = None
 
-                    if not interaction_result.proceed_immediately:
-                        logger.debug("Interaction ended, returning immediately.")
-                        conv_detail = ConversationDetail(
-                            interactions=self._pipeline_context.recorded_interactions,
-                            response_text=interaction_result.response,
-                        )
-                        return NLUResult(
-                            command=self._pipeline_context.current_intent,
-                            parameters=self._pipeline_context.current_parameters,
-                            confidence=self._pipeline_context.current_confidence,
-                            code_execution_result=None,
-                            conversation_detail=conv_detail,
-                        )
-                    else:
-                        proceed_immediately_from_interaction = True
-                        logger.debug("Interaction ended, proceeding immediately.")
-                        if exited_mode == InteractionState.CLARIFYING_INTENT:
-                            goto_step = "param_extraction"
-                        elif exited_mode == InteractionState.VALIDATING_PARAMETER:
-                            goto_step = "code_execution"
-                        else:
-                            goto_step = "intent_classification"
+                if not interaction_result.proceed_immediately:
+                    # Pass local state to helper
+                    return self._extracted_from_run_73(
+                        "Interaction ended, returning immediately.",
+                        interaction_result,
+                        current_interactions,  # Pass local list
+                    )
+                logger.debug("Interaction ended, proceeding immediately.")
+                if exited_mode == InteractionState.CLARIFYING_INTENT:
+                    goto_step = "param_extraction"
+                elif exited_mode == InteractionState.VALIDATING_PARAMETER:
+                    goto_step = "code_execution"
                 else:
-                    logger.debug("Continuing interaction mode, returning prompt.")
-                    conv_detail = ConversationDetail(
-                        interactions=self._pipeline_context.recorded_interactions,
-                        response_text=interaction_result.response,
-                    )
-                    return NLUResult(
-                        command=self._pipeline_context.current_intent,
-                        parameters=self._pipeline_context.current_parameters,
-                        confidence=self._pipeline_context.current_confidence,
-                        code_execution_result=None,
-                        conversation_detail=conv_detail,
-                    )
-
+                    goto_step = "intent_classification"
+            else:
+                logger.error(
+                    f"No handler for mode {self._pipeline_context.interaction_mode}. Resetting."
+                )
+                self._pipeline_context.interaction_mode = None
+                self._pipeline_context.interaction_data = None
         # --- Reset Context ONLY IF starting fresh ---
-        if not proceed_immediately_from_interaction:
-            logger.debug("Starting fresh run. Resetting dynamic context.")
-            self._pipeline_context.recorded_interactions = []
-            self._pipeline_context.last_prompt_shown = None
-            self._pipeline_context.current_intent = None
-            self._pipeline_context.current_parameters = {}
-            self._pipeline_context.current_confidence = None
-            # interaction_mode/data are already IDLE/None if we reach here
+        # No longer need to reset context fields here as local vars handle per-run state
+        # if not proceed_immediately_from_interaction:
+        #    logger.debug("Starting fresh run. Resetting dynamic context.")
+        #    # self._pipeline_context.recorded_interactions = [] # Removed - Use local var
+        #    current_last_prompt_shown = None # Reset local var
+        #    self._pipeline_context.current_intent = None
+        #    self._pipeline_context.current_parameters = {}
+        # interaction_mode/data are already IDLE/None if we reach here
 
         # --- Main NLU Pipeline ---
         logger.debug(f"Running main NLU pipeline starting from step: {goto_step}")
@@ -332,19 +339,19 @@ class TalkEngine:
                 intent_result = self._intent_detector.classify_intent(
                     user_query, self._pipeline_context, excluded_intents
                 )
+                # Assign intent and confidence score from result to context
                 self._pipeline_context.current_intent = intent_result.get(
                     "intent", "unknown"
                 )
-                self._pipeline_context.current_confidence = intent_result.get(
-                    "confidence", 0.0
+                self._pipeline_context.confidence_score = intent_result.get(
+                    "confidence", 0.0  # Default to 0.0 if not provided
                 )
                 logger.debug(
-                    f"Intent: {self._pipeline_context.current_intent} Conf: {self._pipeline_context.current_confidence:.2f}"
+                    f"Intent: {self._pipeline_context.current_intent}, Confidence: {self._pipeline_context.confidence_score}"
                 )
             except Exception:
                 logger.exception("Error during intent classification.")
                 self._pipeline_context.current_intent = "unknown"
-                self._pipeline_context.current_confidence = 0.0
                 # TODO: Decide if we should return error NLUResult here?
                 # For now, continue with unknown intent.
 
@@ -353,11 +360,11 @@ class TalkEngine:
             if (
                 self._pipeline_context.current_intent != "unknown"
                 # Check confidence is not None before comparing
-                and self._pipeline_context.current_confidence is not None
-                and self._pipeline_context.current_confidence < clarification_threshold
+                and self._pipeline_context.confidence_score is not None
+                and self._pipeline_context.confidence_score < clarification_threshold
             ):
                 logger.info(
-                    f"Intent confidence low ({self._pipeline_context.current_confidence:.2f}). Entering clarification."
+                    f"Intent confidence low ({self._pipeline_context.confidence_score:.2f}). Entering clarification."
                 )
                 # TODO: Get clarification options (e.g., top N intents from detector?)
                 # Ensure current_intent is not None before adding
@@ -373,49 +380,21 @@ class TalkEngine:
                     InteractionState.CLARIFYING_INTENT
                 )
                 self._pipeline_context.interaction_data = clar_data
-                handler = self._interaction_handlers.get(
+                if handler := self._interaction_handlers.get(
                     InteractionState.CLARIFYING_INTENT
-                )
-
-                if handler:
+                ):
                     try:
-                        clarification_prompt = handler.get_initial_prompt(
-                            self._pipeline_context
-                        )
-                        # Log interaction start
-                        clarification_log_entry: InteractionLogEntry = (
-                            InteractionState.CLARIFYING_INTENT.value,
-                            clarification_prompt,
-                            None,
-                        )
-                        self._pipeline_context.recorded_interactions.append(
-                            clarification_log_entry
-                        )
-                        self._pipeline_context.last_prompt_shown = clarification_prompt
-
-                        # Return NLUResult indicating clarification needed
-                        conv_detail = ConversationDetail(
-                            interactions=self._pipeline_context.recorded_interactions,
-                            response_text=clarification_prompt,
-                        )
-                        return NLUResult(
-                            command=None,  # Intent is not confirmed yet
-                            parameters={},
-                            confidence=None,
-                            code_execution_result=None,
-                            conversation_detail=conv_detail,
+                        # Pass local state to helper
+                        return self._extracted_from_run_(
+                            handler, current_interactions, current_last_prompt_shown
                         )
                     except Exception:
-                        logger.exception(
+                        self._extracted_from_run_194(
                             "Error getting clarification prompt. Aborting clarification."
                         )
-                        self._pipeline_context.interaction_mode = InteractionState.IDLE
-                        self._pipeline_context.interaction_data = None
                 else:
                     logger.error("Clarification handler not found!")
-                    self._pipeline_context.interaction_mode = (
-                        InteractionState.IDLE
-                    )  # Reset state
+                    self._pipeline_context.interaction_mode = None  # Reset state
 
             # If clarification wasn't entered, proceed to next step flag
             goto_step = "param_extraction"
@@ -482,47 +461,21 @@ class TalkEngine:
                     InteractionState.VALIDATING_PARAMETER
                 )
                 self._pipeline_context.interaction_data = val_data
-                handler = self._interaction_handlers.get(
+                if handler := self._interaction_handlers.get(
                     InteractionState.VALIDATING_PARAMETER
-                )
-
-                if handler:
+                ):
                     try:
-                        validation_prompt = handler.get_initial_prompt(
-                            self._pipeline_context
-                        )
-                        validation_log_entry: InteractionLogEntry = (
-                            InteractionState.VALIDATING_PARAMETER.value,
-                            validation_prompt,
-                            None,
-                        )
-                        self._pipeline_context.recorded_interactions.append(
-                            validation_log_entry
-                        )
-                        self._pipeline_context.last_prompt_shown = validation_prompt
-                        conv_detail = ConversationDetail(
-                            interactions=self._pipeline_context.recorded_interactions,
-                            response_text=validation_prompt,
-                        )
-                        logger.debug(
-                            "Validation triggered. Returning NLUResult with prompt."
-                        )  # Added logging
-                        return NLUResult(
-                            command=self._pipeline_context.current_intent,
-                            parameters=self._pipeline_context.current_parameters,
-                            confidence=self._pipeline_context.current_confidence,
-                            code_execution_result=None,
-                            conversation_detail=conv_detail,
+                        # Pass local state to helper
+                        return self._extracted_from_run_256(
+                            handler, current_interactions, current_last_prompt_shown
                         )
                     except Exception:
-                        logger.exception(
+                        self._extracted_from_run_194(
                             "Error during validation prompt generation/return. Aborting validation."
                         )
-                        self._pipeline_context.interaction_mode = InteractionState.IDLE
-                        self._pipeline_context.interaction_data = None
                 else:
                     logger.error("Validation handler not found!")
-                    self._pipeline_context.interaction_mode = InteractionState.IDLE
+                    self._pipeline_context.interaction_mode = None
 
             goto_step = "code_execution"  # Move to next step if validation not entered or handled
 
@@ -568,44 +521,159 @@ class TalkEngine:
 
         if goto_step == "text_generation":
             logger.debug("Running main NLU pipeline: Step 4 - Text Generation")
-            # 4. Text Generation (Optional)
-            text_response: Optional[str] = None
-            if self._text_generator:
-                # Generate text even for unknown intent to provide feedback
-                intent_to_generate = self._pipeline_context.current_intent or "unknown"
-                params_to_generate = self._pipeline_context.current_parameters
+            # 4. Text Generation (Mandatory)
+            text_response: str = ""
+            # Generate text even for unknown intent to provide feedback
+            intent_to_generate = self._pipeline_context.current_intent or "unknown"
+            params_to_generate = self._pipeline_context.current_parameters
 
-                try:
-                    text_response = self._text_generator.generate_text(
+            try:
+                if self._text_generator is not None:
+                    generated_text = self._text_generator.generate_text(
                         intent_to_generate,
                         params_to_generate,
                         code_exec_result,  # Pass code result (might be None)
                         self._pipeline_context,
                     )
-                    logger.debug(f"Generated text response: {text_response}")
-                except Exception:
-                    logger.exception("Error during text generation.")
-                    text_response = (
-                        "Sorry, I encountered an error generating a response."
+                    if generated_text is not None:
+                        text_response = generated_text
+                        logger.debug(f"Generated text response: {text_response}")
+                    else:
+                        text_response = (
+                            "Sorry, I could not generate a specific response for that."
+                        )
+
+                        logger.warning(
+                            "Text generator returned None. Using fallback response."
+                        )
+                else:
+                    logger.warning(
+                        "Text generator is not configured. Cannot generate response."
                     )
-            else:
-                logger.debug("No text generator configured.")
+                    text_response = (
+                        "Sorry, the text generation component is not available."
+                    )
+            except Exception:
+                logger.exception("Error during text generation.")
+                # Ensure text_response is assigned even after exception
+                text_response = "Sorry, I encountered an error generating a response."
 
         # 5. Final Result Construction
         final_conv_detail = ConversationDetail(
-            interactions=self._pipeline_context.recorded_interactions,
+            interactions=current_interactions,  # Use local variable
             response_text=text_response,
         )
         final_nlu_result = NLUResult(
             command=self._pipeline_context.current_intent,
             parameters=self._pipeline_context.current_parameters,
-            confidence=self._pipeline_context.current_confidence,
-            code_execution_result=code_exec_result,
+            artifacts=code_exec_result,
             conversation_detail=final_conv_detail,
         )
 
         logger.info(f"TalkEngine run() completed. Result: {final_nlu_result}")
         return final_nlu_result
+
+    # TODO Rename this here and in `run`
+    def _extracted_from_run_256(
+        self,
+        handler,
+        current_interactions_list: List[InteractionLogEntry],
+        last_prompt: Optional[str],
+    ):
+        # This helper seems to handle returning mid-pipeline for validation
+        # It needs access to the local state if it modifies/reads it.
+        # For now, assume it only needs the context passed to the handler.
+        # If it needs current_interactions/current_last_prompt_shown, they need passing.
+        # Minimal change: Assume it works as is, relying on context state *before* this call.
+        # Let's add the local state pass-through for consistency if needed.
+
+        # This helper is called from within the main pipeline logic block,
+        # Need to ensure local state `current_interactions` and `current_last_prompt_shown` are handled correctly.
+
+        validation_prompt = handler.get_initial_prompt(self._pipeline_context)
+        validation_log_entry: InteractionLogEntry = (
+            InteractionState.VALIDATING_PARAMETER.value,
+            validation_prompt,
+            None,
+        )
+        # Append to the passed-in local list
+        current_interactions_list.append(validation_log_entry)
+
+        # The prompt to return *is* the validation prompt itself
+        # self._pipeline_context.last_prompt_shown = validation_prompt # No! Use local var logic
+        conv_detail = ConversationDetail(
+            interactions=current_interactions_list,  # Use local list
+            response_text=validation_prompt,  # Return the generated prompt
+        )
+        logger.debug(
+            "Validation triggered. Returning NLUResult with prompt."
+        )  # Added logging
+        return NLUResult(
+            command=self._pipeline_context.current_intent,
+            parameters=self._pipeline_context.current_parameters,
+            artifacts=None,
+            conversation_detail=conv_detail,
+        )
+
+    # TODO Rename this here and in `run`
+    def _extracted_from_run_(
+        self,
+        handler,
+        current_interactions_list: List[InteractionLogEntry],
+        last_prompt: Optional[str],
+    ):
+        # Similar issue as _extracted_from_run_256 regarding local state.
+
+        clarification_prompt = handler.get_initial_prompt(self._pipeline_context)
+        # Log interaction start
+        clarification_log_entry: InteractionLogEntry = (
+            InteractionState.CLARIFYING_INTENT.value,
+            clarification_prompt,
+            None,
+        )
+        # Append to the passed-in local list
+        current_interactions_list.append(clarification_log_entry)
+
+        # The prompt to return *is* the clarification prompt itself
+        # self._pipeline_context.last_prompt_shown = clarification_prompt # No! Use local var logic
+
+        # Return NLUResult indicating clarification needed
+        conv_detail = ConversationDetail(
+            interactions=current_interactions_list,  # Use local list
+            response_text=clarification_prompt,  # Return the generated prompt
+        )
+        return NLUResult(
+            command=None,  # Intent is not confirmed yet
+            parameters={},
+            artifacts=None,
+            conversation_detail=conv_detail,
+        )
+
+    # TODO Rename this here and in `run`
+    def _extracted_from_run_194(self, arg0):
+        logger.exception(arg0)
+        # These still modify context directly, which is fine as they exist.
+        self._pipeline_context.interaction_mode = None
+        self._pipeline_context.interaction_data = None
+
+    # TODO Rename this here and in `run`
+    def _extracted_from_run_73(
+        self,
+        arg0,
+        interaction_result,
+        current_interactions_list: List[InteractionLogEntry],
+    ):
+        logger.debug(arg0)
+        conv_detail = ConversationDetail(
+            interactions=current_interactions_list,  # Use passed-in local list
+            response_text=interaction_result.response,
+        )
+        return NLUResult(
+            command=self._pipeline_context.current_intent,
+            parameters=self._pipeline_context.current_parameters,
+            artifacts=None,
+            conversation_detail=conv_detail,
+        )
 
     def reset(
         self,
@@ -617,99 +685,3 @@ class TalkEngine:
         logger.info("Resetting TalkEngine...")
         # Re-run initialization logic using the helper method
         self._do_initialize(command_metadata, conversation_history, nlu_overrides)
-
-
-# Example Usage (for testing/demonstration)
-if __name__ == "__main__":
-    print("--- TalkEngine Example --- ")
-    # Configure logging for the example
-    import logging
-
-    logging.basicConfig(level=logging.DEBUG)
-
-    meta = {
-        "calculator.add": {
-            "description": "Adds two numbers.",
-            "parameters": {"num1": "int", "num2": "int"},
-        },
-        "weather.get_forecast": {
-            "description": "Gets weather.",
-            "parameters": {"location": "str", "date": "str"},
-        },
-        "search.web": {
-            "description": "Search the web",
-            "parameters": {"search_term": "str"},
-        },
-    }
-    hist = [{"role": "user", "content": "previous query"}]
-
-    # --- Example 1: Using Defaults ---
-    print("\n--- Running with Defaults ---")
-    engine_default = TalkEngine(command_metadata=meta, conversation_history=hist)
-    engine_default.train()
-
-    queries_default = [
-        "add 5 and 10",
-        "what is the weather in london tomorrow?",
-        "tell me a joke",
-    ]
-
-    for q in queries_default:
-        print(f"\nQuery: {q}")
-        result, hint = engine_default.run(q)
-        print(f"Hint: {hint}")
-        print(f"Result: {result}")
-
-    # --- Example 2: Using Overrides ---
-    print("\n--- Running with Overrides ---")
-
-    # Define dummy override functions/classes
-    class MyIntentDetector(IntentDetectionInterface):
-        def __init__(self, config):
-            logger.debug("MyIntentDetector initialized")
-
-        def classify_intent(
-            self, user_input: str, context: NLUPipelineContext, excluded_intents=None
-        ) -> Dict[str, Any]:
-            logger.debug("MyIntentDetector classify running")
-            if "search" in user_input:
-                return {"intent": "search.web", "confidence": 0.99}
-            return {"intent": "override_unknown", "confidence": 0.5}
-
-    class MyParamExtractor(ParameterExtractionInterface):
-        def __init__(self, config):
-            logger.debug("MyParamExtractor initialized")
-
-        def identify_parameters(
-            self, user_input: str, intent: str, context: NLUPipelineContext
-        ) -> Tuple[Dict[str, Any], List[Any]]:
-            logger.debug("MyParamExtractor identify running")
-            if intent == "search.web":
-                return {"search_term": user_input.split("search for ")[-1]}, []
-            return {"extracted_by": "override"}, []
-
-    my_overrides: Dict[str, NLUImplementation] = {
-        "intent_detection": MyIntentDetector(meta),  # Pass metadata if needed
-        "param_extraction": MyParamExtractor(meta),
-        # Omitting text_generation override, will use default
-    }
-
-    engine_override = TalkEngine(command_metadata=meta, nlu_overrides=my_overrides)
-    engine_override.train()
-    result_override, hint_override = engine_override.run("search for blue widgets")
-    print("\nQuery: search for blue widgets")
-    print(f"Hint: {hint_override}")
-    print(f"Result: {result_override}")
-
-    # --- Example 3: Resetting ---
-    print("\n--- Resetting Engine --- ")
-    new_meta = {
-        "lights.on": {"description": "Turn lights on", "parameters": {"room": "str"}}
-    }
-    # Resetting the first engine instance
-    engine_default.reset(command_metadata=new_meta)
-    engine_default.train()
-    result_reset, hint_reset = engine_default.run("turn the kitchen lights on")
-    print("\nQuery: turn the kitchen lights on")
-    print(f"Hint: {hint_reset}")
-    print(f"Result: {result_reset}")

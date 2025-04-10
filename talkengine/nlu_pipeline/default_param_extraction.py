@@ -9,7 +9,7 @@ from typing import Tuple
 from talkengine.nlu_pipeline.nlu_engine_interfaces import (
     ParameterExtractionInterface,
 )
-from ..models import NLUPipelineContext
+from .models import NLUPipelineContext
 from talkengine.nlu_pipeline.interaction_models import ValidationRequestInfo
 from talkengine.utils.logging import logger
 

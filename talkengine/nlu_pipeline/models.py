@@ -45,8 +45,8 @@ class NLUPipelineContext(BaseModel):
     confidence_score: float = 0.0
     # Add fields to store info needed for response refinement on feedback
     last_user_message_for_response: Optional[str] = None
-    last_execution_results_for_response: Optional[dict[str, str]] = None
-    execution_results: Optional[dict[str, str]] = None
+    last_artifacts_for_response: Optional[dict[str, str]] = None
+    artifacts: Optional[dict[str, str]] = None
 
     # New fields for modal interaction
     interaction_mode: Optional[InteractionState] = None
@@ -54,12 +54,3 @@ class NLUPipelineContext(BaseModel):
 
     # Use modern ConfigDict instead of inner class Config
     model_config = ConfigDict(arbitrary_types_allowed=True)
-
-    # pylint: disable=too-few-public-methods
-    # class Config: <--- Remove deprecated inner class
-    #     \"\"\"Pydantic configuration for NLUPipelineContext.\"\"\"
-
-    #     arbitrary_types_allowed = True
-    #     # Add Pydantic config if not present
-    #     # ... (keep existing config if any)
-    #     # ... (add any new config if necessary)

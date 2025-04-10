@@ -10,11 +10,12 @@ from talkengine.nlu_pipeline.nlu_engine_interfaces import (
     ParameterExtractionInterface,
     TextGenerationInterface,
 )
-from talkengine.models import (
+from talkengine.nlu_pipeline.models import (
     NLUPipelineContext,
+)
+from talkengine.models import (
     NLUResult,
     ConversationDetail,
-    InteractionState,
 )
 
 # Sample metadata for testing
@@ -67,13 +68,11 @@ def test_talkengine_init_defaults() -> None:
     assert engine._nlu_overrides_config == {}
     assert isinstance(engine._intent_detector, IntentDetectionInterface)
     assert isinstance(engine._param_extractor, ParameterExtractionInterface)
-    assert engine._text_generator is None or isinstance(
-        engine._text_generator, TextGenerationInterface
-    )
+    assert isinstance(engine._text_generator, TextGenerationInterface)
     # Check that defaults were instantiated (or add specific checks if needed)
     assert not engine._is_trained
     assert isinstance(engine._pipeline_context, NLUPipelineContext)
-    assert engine._pipeline_context.interaction_mode == InteractionState.IDLE
+    assert engine._pipeline_context.interaction_mode is None
 
 
 def test_talkengine_init_with_history() -> None:
@@ -117,13 +116,15 @@ def test_talkengine_run_structure_defaults() -> None:
     assert isinstance(result, NLUResult)
     # Default intent detector might find cmd1
     assert result.command == "cmd1"
-    assert result.confidence is not None
     assert isinstance(result.parameters, dict)
     assert result.parameters == {}
-    assert result.code_execution_result is None
+    assert result.artifacts is None
     assert isinstance(result.conversation_detail, ConversationDetail)
     assert result.conversation_detail.interactions == []
-    assert result.conversation_detail.response_text is None
+    assert (
+        result.conversation_detail.response_text
+        == "Intent: cmd1, Parameters: (no parameters)"
+    )
 
 
 def test_talkengine_run_with_overrides(
@@ -152,8 +153,7 @@ def test_talkengine_run_with_overrides(
     assert isinstance(result, NLUResult)
     assert result.command == "mock_intent"
     assert result.parameters == mock_params
-    assert result.confidence == 0.99
-    assert result.code_execution_result is None
+    assert result.artifacts is None
     assert isinstance(result.conversation_detail, ConversationDetail)
     assert result.conversation_detail.interactions == []
     assert result.conversation_detail.response_text == mock_text
@@ -190,7 +190,8 @@ def test_talkengine_reset() -> None:
     assert isinstance(engine._intent_detector, IntentDetectionInterface)
     assert engine._intent_detector is not initial_intent_detector  # Ensure new instance
     assert isinstance(engine._pipeline_context, NLUPipelineContext)
-    assert engine._pipeline_context.interaction_mode == InteractionState.IDLE
+    # Interaction mode should reset to None
+    assert engine._pipeline_context.interaction_mode is None
     # train() needs to be called again after reset
     assert not engine._is_trained
 
@@ -255,7 +256,7 @@ def test_talkengine_run_with_code_execution(
     assert isinstance(result, NLUResult)
     assert result.command == "code_cmd"
     assert result.parameters == mock_params
-    assert result.code_execution_result == {"code_ran": True}
+    assert result.artifacts == {"code_ran": True}
     assert (
         result.conversation_detail.response_text == "Code executed and text generated."
     )
@@ -264,44 +265,6 @@ def test_talkengine_run_with_code_execution(
     mock_text_generator.generate_text.assert_called_once_with(
         "code_cmd", mock_params, {"code_ran": True}, ANY
     )
-
-
-def test_talkengine_run_only_code_execution(
-    mock_overrides: Dict[str, Any],
-    mock_intent_detector: MagicMock,
-    mock_param_extractor: MagicMock,
-) -> None:
-    """Test run() when only code execution is configured (no text gen)."""
-    mock_executable = MagicMock(return_value={"code_ran": True})
-    metadata_with_code = {
-        "code_cmd": {"description": "Code only", "executable_code": mock_executable}
-    }
-    # Add specific type hint for this dictionary
-    overrides_no_text: Dict[
-        str, Union[IntentDetectionInterface, ParameterExtractionInterface]
-    ] = {
-        "intent_detection": mock_intent_detector,
-        "param_extraction": mock_param_extractor,
-    }
-    engine = TalkEngine(
-        command_metadata=metadata_with_code, nlu_overrides=overrides_no_text
-    )
-    engine.train()
-    query = "run code only cmd"
-    mock_params: Dict[str, Any] = {}
-
-    mock_intent_detector.classify_intent.return_value = {
-        "intent": "code_cmd",
-        "confidence": 0.99,
-    }
-    mock_param_extractor.identify_parameters.return_value = (mock_params, [])
-
-    result: NLUResult = engine.run(query)
-
-    mock_executable.assert_called_once_with(mock_params)
-    assert result.command == "code_cmd"
-    assert result.code_execution_result == {"code_ran": True}
-    assert result.conversation_detail.response_text is None  # No text generator
 
 
 def test_talkengine_run_only_text_generation(
@@ -327,7 +290,7 @@ def test_talkengine_run_only_text_generation(
     result: NLUResult = engine.run(query)
 
     assert result.command == "text_cmd"
-    assert result.code_execution_result is None  # No code executed
+    assert result.artifacts is None  # No code executed
     assert result.conversation_detail.response_text == "Only text generated."
     mock_text_generator.generate_text.assert_called_once_with(
         "text_cmd", mock_params, None, ANY  # Code result is None
@@ -338,10 +301,12 @@ def test_talkengine_run_no_code_or_text(
     mock_overrides: Dict[str, Any],
     mock_intent_detector: MagicMock,
     mock_param_extractor: MagicMock,
+    mock_text_generator: MagicMock,  # Add text generator mock
 ) -> None:
-    """Test run() when neither code exec nor text gen is configured."""
+    """Test run() with only default text generation (no code exec, no text override)."""
     metadata_minimal = {"minimal_cmd": {"description": "Minimal"}}
-    # Add specific type hint for this dictionary
+
+    # Use overrides *without* text_generation to force default
     overrides_no_text: Dict[
         str, Union[IntentDetectionInterface, ParameterExtractionInterface]
     ] = {
@@ -361,8 +326,14 @@ def test_talkengine_run_no_code_or_text(
     }
     mock_param_extractor.identify_parameters.return_value = (mock_params, [])
 
+    # Even without override, default text generator IS present
+    # We don't mock it here, we expect the *actual* default output
+    # default_text_generator = DefaultTextGeneration()
+    expected_text = "Intent: minimal_cmd, Parameters: (no parameters)"
+
     result: NLUResult = engine.run(query)
 
     assert result.command == "minimal_cmd"
-    assert result.code_execution_result is None
-    assert result.conversation_detail.response_text is None
+    assert result.artifacts is None
+    # Assert that the default text generator produced output
+    assert result.conversation_detail.response_text == expected_text

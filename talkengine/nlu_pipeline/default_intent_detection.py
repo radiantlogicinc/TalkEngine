@@ -6,7 +6,7 @@ Provides a basic keyword/substring matching implementation.
 from typing import Any, Dict, List, Optional
 
 from talkengine.nlu_pipeline.nlu_engine_interfaces import IntentDetectionInterface
-from ..models import NLUPipelineContext
+from .models import NLUPipelineContext
 from talkengine.utils.logging import logger
 
 

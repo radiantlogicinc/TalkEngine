@@ -21,7 +21,7 @@ lint: gen-env
 	bandit -c pyproject.toml -r . --exclude ./.venv
 
 test:
-	pytest
+	.venv/bin/python -m pytest
 
 publish-testpypi: gen-env
 	$(LOAD_ENV)
