@@ -85,18 +85,15 @@ class ClarificationHandler(BaseInteractionHandler):
             # Maybe try fuzzy matching the text input against options?
             logger.warning("User input is not a number. Clarification failed.")
 
+        context.interaction_mode = None  # Exit interaction mode
+        context.interaction_data = None
         if chosen_intent:
             # Update context directly
             context.current_intent = chosen_intent
             context.confidence_score = 1.0  # Assume high confidence after clarification
-            context.interaction_mode = None  # Exit interaction mode
-            context.interaction_data = None
             # Exit clarification, proceed immediately to parameter extraction
             return context, True, NLUPipelineState.PARAMETER_IDENTIFICATION.value, None
         else:
-            # Clarification failed
-            context.interaction_mode = None  # Exit interaction mode
-            context.interaction_data = None
             fail_response = "Sorry, I didn't understand that choice. Please try again."
             # Don't proceed immediately, no specific next step (engine might retry intent classification or fail)
             return context, False, None, fail_response
@@ -164,7 +161,7 @@ class FeedbackHandler(BaseInteractionHandler):
 
         # Maybe truncate long responses for the prompt
         response_snippet = (
-            data.response_text[:200] + "..."
+            f"{data.response_text[:200]}..."
             if len(data.response_text) > 200
             else data.response_text
         )
@@ -175,6 +172,7 @@ class FeedbackHandler(BaseInteractionHandler):
     def handle_input(
         self, context: NLUPipelineContext, user_message: str
     ) -> Tuple[NLUPipelineContext, bool, Optional[str], Optional[str]]:
+        # sourcery skip: extract-duplicate-method, inline-variable
 
         data = context.interaction_data
         if not isinstance(data, FeedbackData):
@@ -190,7 +188,7 @@ class FeedbackHandler(BaseInteractionHandler):
         print(f"Received feedback: {feedback}")  # Replace with logging
 
         response_message = "Thanks for the feedback!"
-        if feedback in ["no", "incorrect", "wrong"]:
+        if feedback in {"no", "incorrect", "wrong"}:
             # Could trigger a re-generation attempt or ask for more details
             response_message = "Thanks for letting me know. Can you provide more details on what was wrong?"
             # Decide if we should exit mode or ask clarifying question here. For now, exit.

@@ -17,11 +17,17 @@ def check_for_meta_commands(user_message: str) -> MetaCommandType:
     normalized_message = user_message.strip().lower()
 
     # Simple exact match for now, could use regex or fuzzy matching
-    if normalized_message in ["cancel", "never mind", "nevermind", "stop", "abort"]:
+    if normalized_message in {
+        "cancel",
+        "never mind",
+        "nevermind",
+        "stop",
+        "abort",
+    }:
         return MetaCommandType.CANCEL
-    if normalized_message in ["reset", "start over"]:
+    if normalized_message in {"reset", "start over"}:
         return MetaCommandType.RESET
-    if normalized_message in ["help", "/help"]:
+    if normalized_message in {"help", "/help"}:
         return MetaCommandType.HELP
 
     # Add checks for other meta commands if needed

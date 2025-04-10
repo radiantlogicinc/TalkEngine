@@ -4,15 +4,12 @@ Defines the core TalkEngine class.
 
 from typing import Any, Optional, Dict, List, Union, Callable, Mapping
 
-# Assuming simplified types are defined or basic types used
-# from .types import CommandMetadataInput, ConversationHistoryInput, NLUOverridesInput, NLURunResult
 from .nlu_pipeline.nlu_engine_interfaces import (
     IntentDetectionInterface,
     ParameterExtractionInterface,
     TextGenerationInterface,
 )
 
-# Import NLU models and interaction components - Corrected path
 from .models import (
     NLUResult,
     ConversationDetail,
@@ -32,7 +29,6 @@ from .nlu_pipeline.default_intent_detection import DefaultIntentDetection
 from .nlu_pipeline.default_param_extraction import DefaultParameterExtraction
 from .nlu_pipeline.default_text_generation import DefaultTextGeneration
 
-# Corrected interaction model path
 from .nlu_pipeline.interaction_models import (
     ValidationRequestInfo,
     ValidationData,
@@ -112,10 +108,6 @@ class TalkEngine:
 
         # Initialize pipeline context
         self._pipeline_context = NLUPipelineContext()
-        # Store static config in context if needed by components
-        # (Alternatively, pass directly during component calls)
-        # self._pipeline_context.command_metadata = self._command_metadata
-        # self._pipeline_context.conversation_history = self._conversation_history
 
         # Initialize NLU components (intent detection, parameter extraction, response generation)
         # using defaults or overrides
@@ -188,7 +180,6 @@ class TalkEngine:
         self._interaction_handlers = {
             InteractionState.CLARIFYING_INTENT: ClarificationHandler(),
             InteractionState.VALIDATING_PARAMETER: ValidationHandler(),
-            # InteractionState.AWAITING_FEEDBACK: FeedbackHandler(), # Removed - State not defined
         }
         logger.debug("Interaction Handlers Initialized.")
 
@@ -278,8 +269,6 @@ class TalkEngine:
                     self._pipeline_context, user_query  # Pass context first
                 )
                 self._pipeline_context = updated_context  # Update engine's context
-                # Set local prompt variable based on what handler set (for potential immediate return) - REMOVED
-                # current_last_prompt_shown = self._pipeline_context.last_prompt_shown
 
                 # New logic based on tuple return
                 if not proceed_flag:
@@ -404,8 +393,6 @@ class TalkEngine:
             logger.debug("Running main NLU pipeline: Step 2 - Parameter Extraction")
             # 2. Parameter Extraction (only if intent is known)
             validation_requests: List[ValidationRequestInfo] = []
-            # Preserve params if proceeding immediately from intent clarification
-            # params_before_extraction = self._pipeline_context.current_parameters.copy()
 
             if (
                 self._pipeline_context.current_intent
@@ -420,13 +407,6 @@ class TalkEngine:
                             self._pipeline_context,
                         )
                     )
-                    # If proceeding from intent clarification, merge/update params?
-                    # No, context should already be updated by handler. Replace params.
-                    # if self._pipeline_context.interaction_mode != InteractionState.IDLE:
-                    #      # If we are here after proceed_immediately, context should be updated.
-                    #      # Don't overwrite params set by interaction handler?
-                    #      pass # Trust context params set by handler
-                    # else:
                     # If running fresh, set extracted params
                     self._pipeline_context.current_parameters = extracted_params
 
@@ -438,10 +418,6 @@ class TalkEngine:
                     )
                 except Exception:
                     logger.exception("Error during parameter extraction.")
-                    # Restore params if proceeding from interaction?
-                    # if self._pipeline_context.interaction_mode != InteractionState.IDLE:
-                    #    self._pipeline_context.current_parameters = params_before_extraction
-                    # else:
                     # If running fresh and extraction fails, clear params
                     self._pipeline_context.current_parameters = {}
                     # Continue, but parameters might be missing
@@ -599,8 +575,6 @@ class TalkEngine:
         # Append to the passed-in local list
         current_interactions_list.append(validation_log_entry)
 
-        # The prompt to return *is* the validation prompt itself
-        # self._pipeline_context.last_prompt_shown = validation_prompt # No! Use local var logic
         conv_detail = ConversationDetail(
             interactions=current_interactions_list,  # Use local list
             response_text=validation_prompt,  # Return the generated prompt
@@ -633,9 +607,6 @@ class TalkEngine:
         )
         # Append to the passed-in local list
         current_interactions_list.append(clarification_log_entry)
-
-        # The prompt to return *is* the clarification prompt itself
-        # self._pipeline_context.last_prompt_shown = clarification_prompt # No! Use local var logic
 
         # Return NLUResult indicating clarification needed
         conv_detail = ConversationDetail(

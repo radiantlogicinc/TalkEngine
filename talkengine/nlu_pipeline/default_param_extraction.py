@@ -49,9 +49,7 @@ class DefaultParameterExtraction(ParameterExtractionInterface):
         # 2. Basic Validation Check (Required Parameters)
         validation_requests: List[ValidationRequestInfo] = []
         intent_meta = self._command_metadata.get(intent, {})
-        required_params = intent_meta.get("required_parameters", [])
-
-        if required_params:
+        if required_params := intent_meta.get("required_parameters", []):
             logger.debug(
                 f"Checking required parameters for intent '{intent}': {required_params}"
             )
