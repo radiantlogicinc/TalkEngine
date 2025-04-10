@@ -21,12 +21,12 @@ from .models import (
 from .nlu_pipeline.models import (
     NLUPipelineContext,
     InteractionState,
+    NLUPipelineState,
 )
 from .nlu_pipeline.interaction_handlers import (
     BaseInteractionHandler,
     ClarificationHandler,
     ValidationHandler,
-    InteractionResult,
 )
 from .nlu_pipeline.default_intent_detection import DefaultIntentDetection
 from .nlu_pipeline.default_param_extraction import DefaultParameterExtraction
@@ -247,7 +247,7 @@ class TalkEngine:
         )
         # --- End Local State ---
 
-        goto_step = "intent_classification"
+        goto_step = NLUPipelineState.INTENT_CLASSIFICATION.value
 
         # --- FSM Logic (Handle if already in interaction) ---
         if self._pipeline_context.interaction_mode is not None:
@@ -268,71 +268,72 @@ class TalkEngine:
                 else:
                     logger.warning("Cannot log interaction: last_prompt_shown is None.")
 
-                interaction_result: InteractionResult = handler.handle_input(
-                    user_query, self._pipeline_context
+                # Call handler with new signature
+                (
+                    updated_context,
+                    proceed_flag,
+                    goto_step_from_handler,
+                    response_if_returning,
+                ) = handler.handle_input(
+                    self._pipeline_context, user_query  # Pass context first
                 )
-                logger.debug(f"Interaction Result: {interaction_result}")
+                self._pipeline_context = updated_context  # Update engine's context
+                # Set local prompt variable based on what handler set (for potential immediate return) - REMOVED
+                # current_last_prompt_shown = self._pipeline_context.last_prompt_shown
 
-                # Update context fields based on handler result
-                if interaction_result.update_context:
-                    for key, value in interaction_result.update_context.items():
-                        if hasattr(self._pipeline_context, key):
-                            setattr(self._pipeline_context, key, value)
-                        else:
-                            logger.warning(
-                                f"Attempted to update non-existent context field: {key}"
-                            )
-
-                current_last_prompt_shown = (
-                    interaction_result.response
-                )  # Use local variable
-
-                if not interaction_result.exit_mode:
-                    # Pass local state to helper
-                    return self._extracted_from_run_73(
-                        "Continuing interaction mode, returning prompt.",
-                        interaction_result,
-                        current_interactions,  # Pass local list
+                # New logic based on tuple return
+                if not proceed_flag:
+                    # Handler decided not to proceed, return immediately
+                    logger.debug("Interaction handler determined immediate return.")
+                    # The handler should have set context.last_prompt_shown if returning a prompt - NO, use 4th element
+                    return NLUResult(
+                        command=self._pipeline_context.current_intent,  # May be partially set
+                        parameters=self._pipeline_context.current_parameters,
+                        artifacts=self._pipeline_context.artifacts,
+                        conversation_detail=ConversationDetail(
+                            interactions=current_interactions,
+                            response_text=response_if_returning,  # Use response from handler
+                        ),
                     )
-                exited_mode = self._pipeline_context.interaction_mode
-                logger.debug(f"Exiting interaction mode: {exited_mode}")
-                self._pipeline_context.interaction_mode = None
-                self._pipeline_context.interaction_data = None
-
-                if not interaction_result.proceed_immediately:
-                    # Pass local state to helper
-                    return self._extracted_from_run_73(
-                        "Interaction ended, returning immediately.",
-                        interaction_result,
-                        current_interactions,  # Pass local list
-                    )
-                logger.debug("Interaction ended, proceeding immediately.")
-                if exited_mode == InteractionState.CLARIFYING_INTENT:
-                    goto_step = "param_extraction"
-                elif exited_mode == InteractionState.VALIDATING_PARAMETER:
-                    goto_step = "code_execution"
                 else:
-                    goto_step = "intent_classification"
+                    # Handler decided to proceed, set the next step for the main pipeline
+                    logger.debug(
+                        f"Interaction handler proceeding to step: {goto_step_from_handler}"
+                    )
+                    # Map handler's goto step (potentially None) to engine's goto_step
+                    # Use NLUPipelineState enum values for comparison/assignment
+                    if (
+                        goto_step_from_handler
+                        == NLUPipelineState.PARAMETER_IDENTIFICATION.value
+                    ):
+                        goto_step = NLUPipelineState.PARAMETER_IDENTIFICATION.value
+                    elif (
+                        goto_step_from_handler == NLUPipelineState.CODE_EXECUTION.value
+                    ):
+                        goto_step = NLUPipelineState.CODE_EXECUTION.value
+                    # Add more specific steps if needed
+                    else:
+                        # Default if handler doesn't specify or provides unknown step
+                        logger.warning(
+                            f"Handler returned goto_step='{goto_step_from_handler}', defaulting to intent classification."
+                        )
+                        goto_step = NLUPipelineState.INTENT_CLASSIFICATION.value
             else:
                 logger.error(
                     f"No handler for mode {self._pipeline_context.interaction_mode}. Resetting."
                 )
                 self._pipeline_context.interaction_mode = None
                 self._pipeline_context.interaction_data = None
-        # --- Reset Context ONLY IF starting fresh ---
-        # No longer need to reset context fields here as local vars handle per-run state
-        # if not proceed_immediately_from_interaction:
-        #    logger.debug("Starting fresh run. Resetting dynamic context.")
-        #    # self._pipeline_context.recorded_interactions = [] # Removed - Use local var
-        #    current_last_prompt_shown = None # Reset local var
-        #    self._pipeline_context.current_intent = None
-        #    self._pipeline_context.current_parameters = {}
-        # interaction_mode/data are already IDLE/None if we reach here
+                goto_step = (
+                    NLUPipelineState.INTENT_CLASSIFICATION.value
+                )  # Ensure goto_step is set
 
         # --- Main NLU Pipeline ---
         logger.debug(f"Running main NLU pipeline starting from step: {goto_step}")
+        text_response: Optional[str] = None  # Initialize text_response
+        code_exec_result: Optional[Dict[str, Any]] = None  # Initialize code_exec_result
 
-        if goto_step == "intent_classification":
+        if goto_step == NLUPipelineState.INTENT_CLASSIFICATION.value:
             logger.debug("Running main NLU pipeline: Step 1 - Intent Classification")
             # 1. Intent Classification
             try:
@@ -397,9 +398,9 @@ class TalkEngine:
                     self._pipeline_context.interaction_mode = None  # Reset state
 
             # If clarification wasn't entered, proceed to next step flag
-            goto_step = "param_extraction"
+            goto_step = NLUPipelineState.PARAMETER_IDENTIFICATION.value
 
-        if goto_step == "param_extraction":
+        if goto_step == NLUPipelineState.PARAMETER_IDENTIFICATION.value:
             logger.debug("Running main NLU pipeline: Step 2 - Parameter Extraction")
             # 2. Parameter Extraction (only if intent is known)
             validation_requests: List[ValidationRequestInfo] = []
@@ -477,12 +478,11 @@ class TalkEngine:
                     logger.error("Validation handler not found!")
                     self._pipeline_context.interaction_mode = None
 
-            goto_step = "code_execution"  # Move to next step if validation not entered or handled
+            goto_step = NLUPipelineState.CODE_EXECUTION.value
 
-        if goto_step == "code_execution":
+        if goto_step == NLUPipelineState.CODE_EXECUTION.value:
             logger.debug("Running main NLU pipeline: Step 3 - Code Execution")
             # 3. Code Execution (Optional)
-            code_exec_result: Optional[Dict[str, Any]] = None
             if (
                 self._pipeline_context.current_intent
                 and self._pipeline_context.current_intent != "unknown"
@@ -517,12 +517,12 @@ class TalkEngine:
                     )
 
             # Proceed to next step flag
-            goto_step = "text_generation"
+            goto_step = NLUPipelineState.RESPONSE_TEXT_GENERATION.value
 
-        if goto_step == "text_generation":
+        if goto_step == NLUPipelineState.RESPONSE_TEXT_GENERATION.value:
             logger.debug("Running main NLU pipeline: Step 4 - Text Generation")
             # 4. Text Generation (Mandatory)
-            text_response: str = ""
+            text_response = ""
             # Generate text even for unknown intent to provide feedback
             intent_to_generate = self._pipeline_context.current_intent or "unknown"
             params_to_generate = self._pipeline_context.current_parameters

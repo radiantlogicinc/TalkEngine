@@ -2,19 +2,19 @@
 
 from unittest.mock import ANY, MagicMock
 from typing import Dict, Any
+from copy import deepcopy
 
 from talkengine import TalkEngine
 from talkengine.models import (
     NLUResult,
     ConversationDetail,
 )
-from talkengine.nlu_pipeline.models import InteractionState
+from talkengine.nlu_pipeline.models import InteractionState, NLUPipelineState
 from talkengine.nlu_pipeline.interaction_models import (
     ValidationRequestInfo,
     ClarificationData,
     ValidationData,
 )
-from talkengine.nlu_pipeline.interaction_handlers import InteractionResult
 
 # Sample metadata for testing interactions
 INTERACTION_TEST_METADATA = {
@@ -127,11 +127,19 @@ def test_handle_clarification_input_success(
     # Configure Clarification Handler mock for success
     mock_clar_handler = mock_interaction_handlers[InteractionState.CLARIFYING_INTENT]
     chosen_intent = "cmd_ambiguous1"
-    mock_clar_handler.handle_input.return_value = InteractionResult(
-        response=f"Okay, using {chosen_intent}",
-        exit_mode=True,
-        proceed_immediately=True,
-        update_context={"current_intent": chosen_intent},  # Handler sets intent
+
+    # Mock the handler to return the new tuple format
+    mock_final_context = deepcopy(engine._pipeline_context)  # Start with initial state
+    mock_final_context.interaction_mode = None
+    mock_final_context.interaction_data = None
+    mock_final_context.current_intent = chosen_intent
+    mock_final_context.confidence_score = 1.0
+
+    mock_clar_handler.handle_input.return_value = (
+        mock_final_context,
+        True,  # proceed_immediately = True
+        NLUPipelineState.PARAMETER_IDENTIFICATION.value,  # goto_step
+        None,  # response_if_returning (None because proceed=True)
     )
 
     # Configure subsequent NLU steps (param extractor, text gen)
@@ -165,7 +173,7 @@ def test_handle_clarification_input_success(
 
     # Check mocks
     mock_clar_handler.handle_input.assert_called_once_with(
-        user_clarification_input, ANY
+        ANY, user_clarification_input
     )
     # Verify NLU pipeline continued
     # Note: Param extractor is called with ORIGINAL query, not clarification input
@@ -302,14 +310,21 @@ def test_handle_validation_input_success(
     # Configure Validation Handler mock for success
     mock_val_handler = mock_interaction_handlers[InteractionState.VALIDATING_PARAMETER]
     updated_params = {validated_param_name: user_validation_input}
-    mock_val_handler.handle_input.return_value = InteractionResult(
-        response=f"Okay, using {user_validation_input}",
-        exit_mode=True,
-        proceed_immediately=True,
-        update_context={"current_parameters": updated_params},
+
+    # Mock the handler to return the new tuple format
+    mock_final_context = deepcopy(engine._pipeline_context)  # Start with initial state
+    mock_final_context.interaction_mode = None
+    mock_final_context.interaction_data = None
+    mock_final_context.current_parameters = updated_params
+
+    mock_val_handler.handle_input.return_value = (
+        mock_final_context,
+        True,  # proceed_immediately = True
+        NLUPipelineState.CODE_EXECUTION.value,  # goto_step
+        None,  # response_if_returning (None because proceed=True)
     )
 
-    # Configure subsequent NLU step (text gen)
+    # Configure subsequent step (text gen)
     mock_text = f"Response for {intent_name} with {validated_param_name}={user_validation_input}"
     mock_text_generator.generate_text.return_value = mock_text
 
@@ -338,7 +353,7 @@ def test_handle_validation_input_success(
     assert engine._pipeline_context.current_parameters == updated_params
 
     # Check mocks
-    mock_val_handler.handle_input.assert_called_once_with(user_validation_input, ANY)
+    mock_val_handler.handle_input.assert_called_once_with(ANY, user_validation_input)
     # Verify NLU pipeline continued (only text gen needed after validation)
     # Code exec would happen here if configured, then text gen
     mock_text_generator.generate_text.assert_called_once_with(

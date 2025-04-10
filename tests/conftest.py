@@ -17,7 +17,6 @@ from talkengine.nlu_pipeline.models import NLUPipelineContext, InteractionState
 from talkengine.nlu_pipeline.interaction_handlers import (
     ClarificationHandler,
     ValidationHandler,
-    InteractionResult,
 )
 
 
@@ -112,26 +111,29 @@ def mock_clarification_handler():
     mock = MagicMock(spec=ClarificationHandler)
     # Default initial prompt
     mock.get_initial_prompt.return_value = "Mock Clarification Prompt"
-    # Default handling result (e.g., successful clarification)
-    mock.handle_input.return_value = InteractionResult(
-        response="Okay, clarified!",
-        exit_mode=True,
-        proceed_immediately=True,
-        update_context={"current_intent": "clarified_intent"},
-    )
+    # Default handling result (using tuple format)
+    mock_context = MagicMock(spec=NLUPipelineContext)
+    mock.handle_input.return_value = (
+        mock_context,
+        True,
+        None,
+    )  # Default: proceed, no specific next step
     return mock
 
 
 @pytest.fixture
 def mock_validation_handler():
+    """Fixture for a mocked ValidationHandler."""
     mock = MagicMock(spec=ValidationHandler)
+    # Default initial prompt
     mock.get_initial_prompt.return_value = "Mock Validation Prompt"
-    mock.handle_input.return_value = InteractionResult(
-        response="Okay, validated!",
-        exit_mode=True,
-        proceed_immediately=True,
-        update_context={"current_parameters": {"validated_param": "valid_value"}},
-    )
+    # Default handling result (using tuple format)
+    mock_context = MagicMock(spec=NLUPipelineContext)
+    mock.handle_input.return_value = (
+        mock_context,
+        True,
+        None,
+    )  # Default: proceed, no specific next step
     return mock
 
 

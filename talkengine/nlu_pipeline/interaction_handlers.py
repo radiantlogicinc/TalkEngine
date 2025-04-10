@@ -2,8 +2,7 @@
 
 # New file
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
-from typing import Any, Dict, Optional
+from typing import Optional, Tuple
 
 # Import the specific data models
 from .interaction_models import (
@@ -11,23 +10,8 @@ from .interaction_models import (
     FeedbackData,
     ValidationData,
 )
-from .models import NLUPipelineContext
+from .models import NLUPipelineContext, NLUPipelineState  # Import state enum
 from ..utils.logging import logger
-
-
-@dataclass
-class InteractionResult:
-    """Structured result from an interaction handler."""
-
-    response: str  # Message for the user
-    exit_mode: bool = False  # Should the manager exit this interaction mode?
-    proceed_immediately: bool = (
-        False  # Should the manager re-run core logic after exiting?
-    )
-    update_context: Optional[Dict[str, Any]] = field(
-        default_factory=dict
-    )  # NLUPipelineContext fields to update
-    error_message: Optional[str] = None  # For reporting input processing errors
 
 
 class BaseInteractionHandler(ABC):
@@ -39,9 +23,17 @@ class BaseInteractionHandler(ABC):
 
     @abstractmethod
     def handle_input(
-        self, user_input: str, context: NLUPipelineContext
-    ) -> InteractionResult:
-        """Process user input during this interaction mode."""
+        self, context: NLUPipelineContext, user_input: str
+    ) -> Tuple[NLUPipelineContext, bool, Optional[str], Optional[str]]:
+        """Process user input during this interaction mode.
+
+        Returns:
+            A tuple containing:
+            - The updated NLUPipelineContext.
+            - A boolean indicating if the main pipeline should proceed immediately.
+            - An optional string indicating the next pipeline step (use NLUPipelineState values).
+            - An optional string response to show the user IF proceed_immediately is False.
+        """
 
 
 class ClarificationHandler(BaseInteractionHandler):
@@ -63,8 +55,8 @@ class ClarificationHandler(BaseInteractionHandler):
         return prompt
 
     def handle_input(
-        self, user_input: str, context: NLUPipelineContext
-    ) -> InteractionResult:
+        self, context: NLUPipelineContext, user_input: str
+    ) -> Tuple[NLUPipelineContext, bool, Optional[str], Optional[str]]:
         """Processes user's choice during clarification."""
         logger.debug(f"ClarificationHandler handling input: '{user_input}'")
 
@@ -72,12 +64,11 @@ class ClarificationHandler(BaseInteractionHandler):
             logger.error(
                 "ClarificationHandler: Invalid interaction data type on input."
             )
-            # Exit interaction, proceed with default/unknown state?
-            return InteractionResult(
-                exit_mode=True,
-                proceed_immediately=False,
-                response="Error: Invalid interaction data for clarification.",
-            )
+            # Exit interaction, don't proceed immediately, no next step
+            context.interaction_mode = None
+            context.interaction_data = None
+            error_response = "Error: Invalid interaction data for clarification."
+            return context, False, None, error_response
 
         data: ClarificationData = context.interaction_data
         chosen_intent: Optional[str] = None
@@ -95,23 +86,20 @@ class ClarificationHandler(BaseInteractionHandler):
             logger.warning("User input is not a number. Clarification failed.")
 
         if chosen_intent:
-            # Update context directly (this part is okay)
+            # Update context directly
             context.current_intent = chosen_intent
             context.confidence_score = 1.0  # Assume high confidence after clarification
-            # Exit clarification, proceed to parameter extraction
-            return InteractionResult(
-                exit_mode=True,
-                proceed_immediately=True,
-                response=f"Okay, proceeding with {chosen_intent}.",
-            )
+            context.interaction_mode = None  # Exit interaction mode
+            context.interaction_data = None
+            # Exit clarification, proceed immediately to parameter extraction
+            return context, True, NLUPipelineState.PARAMETER_IDENTIFICATION.value, None
         else:
-            # Clarification failed, maybe reprompt or exit?
-            # For now, exit and let the engine handle the 'unknown' intent state
-            return InteractionResult(
-                exit_mode=True,
-                proceed_immediately=False,  # Don't proceed if clarification failed
-                response="Sorry, I didn't understand that choice. Please try again.",
-            )
+            # Clarification failed
+            context.interaction_mode = None  # Exit interaction mode
+            context.interaction_data = None
+            fail_response = "Sorry, I didn't understand that choice. Please try again."
+            # Don't proceed immediately, no specific next step (engine might retry intent classification or fail)
+            return context, False, None, fail_response
 
 
 class ValidationHandler(BaseInteractionHandler):
@@ -129,22 +117,21 @@ class ValidationHandler(BaseInteractionHandler):
             or f"What is the value for {data.parameter_name}? ({data.reason})"
         )
         logger.debug(f"Generated validation prompt: {prompt}")
-
+        # The engine will set last_prompt_shown based on this return value
         return prompt
 
     def handle_input(
-        self, user_input: str, context: NLUPipelineContext
-    ) -> InteractionResult:
+        self, context: NLUPipelineContext, user_input: str
+    ) -> Tuple[NLUPipelineContext, bool, Optional[str], Optional[str]]:
         """Processes user's input for a missing/invalid parameter."""
         logger.debug(f"ValidationHandler handling input: '{user_input}'")
 
         if not isinstance(context.interaction_data, ValidationData):
             logger.error("ValidationHandler: Invalid interaction data type on input.")
-            return InteractionResult(
-                exit_mode=True,
-                proceed_immediately=False,
-                response="Error: Invalid interaction data for validation.",
-            )
+            context.interaction_mode = None
+            context.interaction_data = None
+            error_response = "Error: Invalid interaction data for validation."
+            return context, False, None, error_response
 
         data: ValidationData = context.interaction_data
         parameter_name = data.parameter_name
@@ -159,12 +146,11 @@ class ValidationHandler(BaseInteractionHandler):
             context.current_parameters = {}
         context.current_parameters[parameter_name] = validated_value
 
-        # Exit validation mode, proceed to code execution (or next step)
-        return InteractionResult(
-            exit_mode=True,
-            proceed_immediately=True,
-            response=f"Okay, using '{validated_value}' for {parameter_name}.",
-        )
+        context.interaction_mode = None  # Exit validation mode
+        context.interaction_data = None
+
+        # Exit validation mode, proceed immediately to code execution (or next step)
+        return context, True, NLUPipelineState.CODE_EXECUTION.value, None
 
 
 class FeedbackHandler(BaseInteractionHandler):
@@ -182,27 +168,21 @@ class FeedbackHandler(BaseInteractionHandler):
             if len(data.response_text) > 200
             else data.response_text
         )
-        return f"Regarding the response:\n---\n{response_snippet}\n---\n{data.prompt}"
+        prompt = f"Regarding the response:\n---\n{response_snippet}\n---\n{data.prompt}"
+        # Engine sets last_prompt_shown
+        return prompt
 
     def handle_input(
-        self, user_message: str, context: NLUPipelineContext
-    ) -> InteractionResult:
-        # Remove logging access to non-existent attributes
-        # if context.last_prompt_shown:
-        #     log_entry: InteractionLogEntry = (
-        #         context.interaction_mode.value if context.interaction_mode else "feedback", # Guard access
-        #         context.last_prompt_shown,
-        #         user_message,
-        #     )
-        # context.recorded_interactions.append(log_entry) # Remove access
+        self, context: NLUPipelineContext, user_message: str
+    ) -> Tuple[NLUPipelineContext, bool, Optional[str], Optional[str]]:
 
-        # Replace _get_typed_data with direct access and type check
         data = context.interaction_data
         if not isinstance(data, FeedbackData):
             logger.error("FeedbackHandler: Invalid interaction data type on input.")
-            return InteractionResult(
-                response="Error processing feedback.", exit_mode=True
-            )
+            context.interaction_mode = None
+            context.interaction_data = None
+            error_response = "Error processing feedback."
+            return context, False, None, error_response
 
         # Placeholder Logic: Just acknowledge feedback and exit mode
         feedback = user_message.strip().lower()
@@ -215,11 +195,11 @@ class FeedbackHandler(BaseInteractionHandler):
             response_message = "Thanks for letting me know. Can you provide more details on what was wrong?"
             # Decide if we should exit mode or ask clarifying question here. For now, exit.
 
-        return InteractionResult(
-            response=response_message,
-            exit_mode=True,
-            proceed_immediately=False,  # Usually don't proceed automatically after feedback
-        )
+        context.interaction_mode = None  # Exit feedback mode
+        context.interaction_data = None
+
+        # Usually don't proceed automatically after feedback
+        return context, False, None, response_message
 
 
 # Add other handlers as needed
