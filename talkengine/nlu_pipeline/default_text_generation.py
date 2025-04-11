@@ -3,7 +3,9 @@
 Provides a basic implementation for generating response text.
 """
 
-from typing import Any, Dict, Optional
+from typing import Any, Optional
+
+from pydantic import BaseModel
 
 from talkengine.nlu_pipeline.nlu_engine_interfaces import TextGenerationInterface
 from .models import NLUPipelineContext
@@ -21,34 +23,28 @@ class DefaultTextGeneration(TextGenerationInterface):
 
     def generate_text(
         self,
-        intent: str,
-        parameters: Dict[str, Any],
-        artifacts: Optional[Dict[str, Any]],
+        *,
+        command: Optional[str] = None,
+        parameters: dict[str, Any],
+        artifacts: Optional[BaseModel] = None,
         context: NLUPipelineContext,
-    ) -> Optional[str]:
-        """Default implementation: generates a basic string representation."""
-        logger.debug(
-            "Default generate_text called for intent '%s' with parameters: %s and code_result: %s",
-            intent,
-            parameters,
-            artifacts,
-        )
-
-        # Always generate a basic text response if intent is known
-        if intent == "unknown":
-            return "I'm sorry, I didn't understand that."
-
+        **kwargs: Any,
+    ) -> str:
+        """Generates a simple text representation of the NLU result."""
+        # logger.debug(
+        #     f"DefaultTextGeneration generate_text called. Command: {command}, "
+        #     f"Params: {parameters}, Artifacts: {artifacts is not None}"
+        # )
         param_str = (
-            ", ".join([f"{k}='{v}'" for k, v in parameters.items()])
-            or "(no parameters)"
+            f"Parameters: {parameters}" if parameters else "Parameters: (no parameters)"
         )
+        # Include command if provided
+        command_str = f"Intent: {command}" if command else "Intent: (not determined)"
+        artifact_str = (
+            f"Artifacts: {type(artifacts).__name__}" if artifacts else "Artifacts: None"
+        )
+        # return f"Intent: {context.current_intent or '(not determined)'}, {param_str}, Artifacts: {artifact_str}"
+        return f"{command_str}, {param_str}, {artifact_str}"
 
-        response_text = f"Intent: {intent}, Parameters: {param_str}"
 
-        # Optionally include code execution result
-        if artifacts is not None:
-            # Simple string representation of the code result dict
-            code_result_str = str(artifacts)
-            response_text += f", Code Result: {code_result_str}"
-
-        return response_text
+# --- How to Use --- #

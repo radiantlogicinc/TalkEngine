@@ -3,8 +3,9 @@
 Provides a basic placeholder implementation.
 """
 
-from typing import Any, Dict, List
-from typing import Tuple
+from typing import Any, Type
+
+from pydantic import BaseModel
 
 from talkengine.nlu_pipeline.nlu_engine_interfaces import (
     ParameterExtractionInterface,
@@ -22,12 +23,12 @@ class DefaultParameterExtraction(ParameterExtractionInterface):
     during initialization.
     """
 
-    def __init__(self, command_metadata: Dict[str, Any]):
+    def __init__(self, command_metadata: dict[str, Any]):
         """Initialize with command metadata.
 
         Args:
             command_metadata: The dictionary describing available commands,
-                              used potentially for parameter type info.
+                              (description, parameter_class). Used for parameter checks.
         """
         self._command_metadata = command_metadata
         logger.debug("DefaultParameterExtraction initialized.")
@@ -36,22 +37,27 @@ class DefaultParameterExtraction(ParameterExtractionInterface):
         self,
         user_input: str,
         intent: str,
+        parameter_class: Type[BaseModel],
         context: NLUPipelineContext,
-    ) -> Tuple[Dict[str, Any], List[ValidationRequestInfo]]:
-        """Default implementation: placeholder extraction and basic validation check."""
+    ) -> tuple[dict[str, Any], list[ValidationRequestInfo]]:
+        """Default implementation: placeholder extraction and basic required field check."""
         logger.debug("Default identify_parameters called for intent '%s'.", intent)
 
         # 1. Placeholder Extraction Logic
         # TODO: Implement actual parameter extraction (e.g., regex, entity recognition)
-        # For now, just return an empty dictionary.
-        extracted_parameters: Dict[str, Any] = {}
+        # A real implementation should use parameter_class.model_fields to know
+        # which fields to look for and their types.
+        extracted_parameters: dict[str, Any] = {}
 
-        # 2. Basic Validation Check (Required Parameters)
-        validation_requests: List[ValidationRequestInfo] = []
-        intent_meta = self._command_metadata.get(intent, {})
-        if required_params := intent_meta.get("required_parameters", []):
+        # 2. Basic Validation Check (Required Parameters using parameter_class)
+        validation_requests: list[ValidationRequestInfo] = []
+        if required_params := {
+            field_name
+            for field_name, field_info in parameter_class.model_fields.items()
+            if field_info.is_required()
+        }:
             logger.debug(
-                f"Checking required parameters for intent '{intent}': {required_params}"
+                f"Checking required parameters for intent '{intent}' based on {parameter_class.__name__}: {required_params}"
             )
             for param_name in required_params:
                 if param_name not in extracted_parameters:

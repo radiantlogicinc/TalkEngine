@@ -4,7 +4,9 @@ Defines abstract interfaces for core NLU components.
 """
 
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Optional, Type
+
+from pydantic import BaseModel
 
 from .models import NLUPipelineContext
 from .interaction_models import ValidationRequestInfo
@@ -23,13 +25,13 @@ class IntentDetectionInterface(ABC):
         self,
         user_input: str,
         context: NLUPipelineContext,
-        excluded_intents: Optional[List[str]] = None,
-    ) -> Dict[str, Any]:
+        excluded_intents: Optional[list[str]] = None,
+    ) -> dict[str, Any]:
         """Classify user intent based on input.
 
         Args:
             user_input: The natural language query from the user.
-            context: The current NLU pipeline context.
+            context: The current NLU pipeline context (contains command_metadata).
             excluded_intents: Optional list of intents to exclude from consideration.
 
         Returns:
@@ -44,8 +46,7 @@ class IntentDetectionInterface(ABC):
 class ParameterExtractionInterface(ABC):
     """Interface for extracting parameters for a given intent.
 
-    Implementations should receive necessary context (like command parameter specs)
-    during initialization.
+    Implementations use the provided parameter_class to guide extraction.
     """
 
     @abstractmethod
@@ -53,20 +54,22 @@ class ParameterExtractionInterface(ABC):
         self,
         user_input: str,
         intent: str,
+        parameter_class: Type[BaseModel],
         context: NLUPipelineContext,
-    ) -> Tuple[Dict[str, Any], List[ValidationRequestInfo]]:
+    ) -> tuple[dict[str, Any], list[ValidationRequestInfo]]:
         """Extract parameters from user input for the given classified intent.
 
         Args:
             user_input: The natural language query from the user.
             intent: The classified intent (command key).
+            parameter_class: The Pydantic BaseModel subclass defining expected parameters.
             context: The current NLU pipeline context.
 
         Returns:
             A tuple containing:
             1. Dictionary of extracted parameter names and their values.
                Example: {"param1": "value1", "param2": 123}
-            2. List of ValidationRequestInfo objects detailing parameters
+            2. list of ValidationRequestInfo objects detailing parameters
                that require user validation (e.g., missing required fields).
                Example: [ValidationRequestInfo(parameter_name='loc', reason='missing_required')]
         """
@@ -79,26 +82,29 @@ class TextGenerationInterface(ABC):
     """Interface for generating user-facing response text.
 
     Implementations might use simple formatting or more complex generation logic.
-    They receive the intent, parameters, and potentially the result of any
-    executed command code.
+    They receive the intent, parameters, and potentially the result object
+    (a BaseModel instance) from any executed command code.
     """
 
     @abstractmethod
     def generate_text(
         self,
-        intent: str,
-        parameters: Dict[str, Any],
-        artifacts: Optional[Dict[str, Any]],
+        *,
+        command: Optional[str] = None,
+        parameters: dict[str, Any],
+        artifacts: Optional[BaseModel] = None,
         context: NLUPipelineContext,
-    ) -> Optional[str]:
+        **kwargs: Any,
+    ) -> str:
         """Generate a user-facing text response.
 
         Args:
-            intent: The classified intent (command key).
-            parameters: The extracted parameters.
-            artifacts: Result from executing code associated with the
-                                     command, if any.
+            command: The classified intent (command key).
+            parameters: The extracted parameters dictionary.
+            artifacts: Result object (Pydantic BaseModel instance) from
+                       executing code associated with the command, if any.
             context: The current NLU pipeline context.
+            **kwargs: Additional keyword arguments.
 
         Returns:
             A user-friendly string representation, or None if no text is generated.

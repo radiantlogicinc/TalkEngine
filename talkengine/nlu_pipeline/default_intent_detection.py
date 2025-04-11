@@ -3,7 +3,7 @@
 Provides a basic keyword/substring matching implementation.
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Optional
 
 from talkengine.nlu_pipeline.nlu_engine_interfaces import IntentDetectionInterface
 from .models import NLUPipelineContext
@@ -17,7 +17,7 @@ class DefaultIntentDetection(IntentDetectionInterface):
     Requires command metadata to be passed during initialization.
     """
 
-    def __init__(self, command_metadata: Dict[str, Any]):
+    def __init__(self, command_metadata: dict[str, Any]):
         """Initialize with command metadata.
 
         Args:
@@ -37,7 +37,7 @@ class DefaultIntentDetection(IntentDetectionInterface):
         """Finds the best command match based on user input keywords/substrings.
 
         Args:
-            commands: List of available command keys.
+            commands: list of available command keys.
             user_input: The user's input string.
 
         Returns:
@@ -107,8 +107,8 @@ class DefaultIntentDetection(IntentDetectionInterface):
         self,
         user_input: str,
         context: NLUPipelineContext,
-        excluded_intents: Optional[List[str]] = None,
-    ) -> Dict[str, Any]:
+        excluded_intents: Optional[list[str]] = None,
+    ) -> dict[str, Any]:
         """Default implementation using keyword/substring matching."""
         logger.debug("Classifying intent for: %s", user_input)
         excluded_set = set(excluded_intents) if excluded_intents else set()

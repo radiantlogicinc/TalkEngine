@@ -2,7 +2,7 @@
 
 # New file
 from abc import ABC, abstractmethod
-from typing import Optional, Tuple
+from typing import Optional
 
 # Import the specific data models
 from .interaction_models import (
@@ -24,7 +24,7 @@ class BaseInteractionHandler(ABC):
     @abstractmethod
     def handle_input(
         self, context: NLUPipelineContext, user_input: str
-    ) -> Tuple[NLUPipelineContext, bool, Optional[str], Optional[str]]:
+    ) -> tuple[NLUPipelineContext, bool, Optional[str], Optional[str]]:
         """Process user input during this interaction mode.
 
         Returns:
@@ -56,7 +56,7 @@ class ClarificationHandler(BaseInteractionHandler):
 
     def handle_input(
         self, context: NLUPipelineContext, user_input: str
-    ) -> Tuple[NLUPipelineContext, bool, Optional[str], Optional[str]]:
+    ) -> tuple[NLUPipelineContext, bool, Optional[str], Optional[str]]:
         """Processes user's choice during clarification."""
         logger.debug(f"ClarificationHandler handling input: '{user_input}'")
 
@@ -109,9 +109,15 @@ class ValidationHandler(BaseInteractionHandler):
             return "Sorry, I need more information. Could you please rephrase?"
 
         data: ValidationData = context.interaction_data
+        # Process the first request, assuming one for now
+        if not data.requests:
+            logger.error("ValidationHandler: No validation requests found in data.")
+            return "Sorry, something went wrong with validation. Could you rephrase?"
+
+        first_request = data.requests[0]
         prompt = (
-            data.prompt
-            or f"What is the value for {data.parameter_name}? ({data.reason})"
+            data.prompt  # Use prompt set by engine if available
+            or f"What is the value for {first_request.parameter_name}? ({first_request.reason})"
         )
         logger.debug(f"Generated validation prompt: {prompt}")
         # The engine will set last_prompt_shown based on this return value
@@ -119,7 +125,7 @@ class ValidationHandler(BaseInteractionHandler):
 
     def handle_input(
         self, context: NLUPipelineContext, user_input: str
-    ) -> Tuple[NLUPipelineContext, bool, Optional[str], Optional[str]]:
+    ) -> tuple[NLUPipelineContext, bool, Optional[str], Optional[str]]:
         """Processes user's input for a missing/invalid parameter."""
         logger.debug(f"ValidationHandler handling input: '{user_input}'")
 
@@ -131,7 +137,18 @@ class ValidationHandler(BaseInteractionHandler):
             return context, False, None, error_response
 
         data: ValidationData = context.interaction_data
-        parameter_name = data.parameter_name
+        # Process the first request, assuming one for now
+        if not data.requests:
+            logger.error(
+                "ValidationHandler: No validation requests found in data during input."
+            )
+            context.interaction_mode = None
+            context.interaction_data = None
+            error_response = "Error: No validation request details found."
+            return context, False, None, error_response
+
+        first_request = data.requests[0]
+        parameter_name = first_request.parameter_name  # Get name from request
         validated_value = user_input  # Assume the input is the value for now
         # TODO: Add type validation/conversion based on metadata?
 
@@ -171,7 +188,7 @@ class FeedbackHandler(BaseInteractionHandler):
 
     def handle_input(
         self, context: NLUPipelineContext, user_message: str
-    ) -> Tuple[NLUPipelineContext, bool, Optional[str], Optional[str]]:
+    ) -> tuple[NLUPipelineContext, bool, Optional[str], Optional[str]]:
         # sourcery skip: extract-duplicate-method, inline-variable
 
         data = context.interaction_data

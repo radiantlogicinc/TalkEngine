@@ -42,30 +42,48 @@ from typing import Optional # For executable example
 logging.basicConfig(level=logging.INFO)
 
 # 1. Define your command metadata
-def add_numbers(num1: int, num2: int) -> int:
-    """Add two numbers together."""
-    try:
-        return num1 + num2
-    except ValueError:
-        return {"error": "Invalid number input"}
+class CommandParameters(BaseModel):
+    num1: int
+    num2: int
+
+class CommandResult(BaseModel):
+    result: int
+    success: bool
+    error: Optional[str] = None
 
 command_metadata = {
     "add_numbers": {
         "description": "Add two numbers together.",
-        "parameters": {"num1": "int", "num2": "int"},
+        "parameter_class": CommandParameters,
     },
 }
 
 # 2. (Optional) Define conversation history
-conversation_history = [
-    {"role": "user", "content": "What was the weather yesterday?"},
-    # Add previous NLU results if available for context
-]
+conversation_history = []
 
 # 3. (Optional) Define NLU overrides
+def add_numbers(input_params: CommandParameters) -> CommandResult:
+    """Add two numbers together."""
+    try:
+        result = input_params.num1 + input_params.num2
+        return CommandResult(
+            result=result, 
+            success=True, 
+            error=None
+        )
+    except ValueError:
+        return CommandResult(
+            result=-999, 
+            success=False, 
+            error="Invalid number input"
+        )
+
 nlu_overrides = {
     "add_numbers": {
-        "executable_code": add_numbers # Add reference to executable function
+        "executable_code": {
+            "function": add_numbers,
+            "result_class": CommandResult,
+        },
     },
 }
 
@@ -128,12 +146,12 @@ Key class: `talkengine.TalkEngine`
 
 `NLUResult` Object Attributes:
 - `command` (Optional[str]): Identified command key (or `None` during interaction, `'unknown'` if not found).
-- `parameters` (Optional[Dict]): Extracted parameters.
-- `artifacts` (Optional[Dict]): Dictionary result from executed code, if any.
+- `parameters` (Optional[dict]): Extracted parameters.
+- `artifacts` (Optional[dict]): Dictionary result from executed code, if any.
 - `conversation_detail` (ConversationDetail): Contains interaction log and final response text.
 
 `ConversationDetail` Object Attributes:
-- `interactions` (List[Tuple[str, str, Optional[str]]]): Log of (stage, prompt, user_response) tuples during interactions.
+- `interactions` (list[tuple[str, str, Optional[str]]]): Log of (stage, prompt, user_response) tuples during interactions.
 - `response_text` (Optional[str]): Final user-facing response text, or the interaction prompt if interaction is ongoing.
 
 ## 🛠️ Development

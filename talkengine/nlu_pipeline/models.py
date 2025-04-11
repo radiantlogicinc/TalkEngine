@@ -5,7 +5,7 @@ from typing import Any, Optional
 
 from pydantic import BaseModel, Field, ConfigDict
 
-from .interaction_models import BaseInteractionData
+from .interaction_models import ClarificationData, ValidationData
 
 
 class NLUPipelineState(str, Enum):
@@ -32,7 +32,7 @@ class NLUPipelineContext(BaseModel):
     """Model for storing NLU pipeline state and context."""
 
     # Config/Static info (passed during init)
-    command_metadata: dict[str, Any] = Field(default_factory=dict)
+    command_metadata: dict[str, dict[str, Any]] = Field(default_factory=dict)
     conversation_history: list[dict[str, Any]] = Field(default_factory=list)
 
     # Pipeline state/tracking
@@ -45,12 +45,12 @@ class NLUPipelineContext(BaseModel):
     confidence_score: float = 0.0
     # Add fields to store info needed for response refinement on feedback
     last_user_message_for_response: Optional[str] = None
-    last_artifacts_for_response: Optional[dict[str, str]] = None
-    artifacts: Optional[dict[str, str]] = None
+    last_artifacts_for_response: Optional[dict[str, Any]] = None
+    artifacts: Optional[BaseModel] = None
 
     # New fields for modal interaction
     interaction_mode: Optional[InteractionState] = None
-    interaction_data: Optional[BaseInteractionData] = None
+    interaction_data: Optional[ClarificationData | ValidationData] = None
 
     # Use modern ConfigDict instead of inner class Config
     model_config = ConfigDict(arbitrary_types_allowed=True)

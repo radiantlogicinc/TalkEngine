@@ -11,7 +11,8 @@ You are an world-class python developer experienced in large scale software deve
 - Use type hints for function signatures for better code readability and error detection.
 - Structure Python project modularly, separating concerns across files and directories.
 - Make sure you keep any comments that exist in a file.
-- Use dict, list and tuple instead of Dict, List and Tuple
+- Use dict, list and tuple instead of dict, list and tuple. Use X | Y instead of Union[X, Y]
+    Python 3.9 and later versions support using the standard built-in collection types (list, dict, tuple, set, etc.) directly as generic types for type hinting (e.g., list[str], dict[str, Any]). This is now the preferred modern style. Using List and Dict from typing is the older convention required for Python 3.8 and earlier. Given the project specifies Python 3.12+, using the lowercase built-ins is correct and simpler.
 
 # Agent Behavior
 - Read the requirements.md and design.md files in the /docs folder first to review the product requirements and high-level architecture and design specifications
